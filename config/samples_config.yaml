@@ -1,0 +1,31 @@
+# Background samples configuration
+# Contains file paths and cross-sections for all background processes
+
+backgrounds:
+  diboson:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_diboson/Events/bkg_diboson_delphes_events.root"
+    cross_section: 104.494  # pb
+
+  sTop_tchannel:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_sTop_tchannel/Events/bkg_sTop_tchannel_delphes_events.root"
+    cross_section: 200.993  # pb
+
+  sTop_tW:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_sTop_tW/Events/bkg_sTop_tW_delphes_events.root"
+    cross_section: 35.6  # pb
+
+  ttbar:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_ttbar/Events/bkg_ttbar_delphes_events.root"
+    cross_section: 831.76  # pb
+
+  wlnjets:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_wlnjets/Events/bkg_wlnjets_delphes_events.root"
+    cross_section: 61526.7  # pb
+
+  znnjets:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_znnjets/Events/bkg_znnjets_delphes_events.root"
+    cross_section: 3507.71  # pb
+
+  dyjets:
+    file: "/Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bkg_dyjets/Events/bkg_dyjets_delphes_events.root"
+    cross_section: 6077.22  # pb

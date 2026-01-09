@@ -1,0 +1,71 @@
+jets:
+  pt_min: 30.0
+  eta_max: 2.4
+
+bjets:
+  btag_threshold: 1
+
+regions:
+  "1b:SR":
+    description: "Signal region, 1 b-tag category"
+    cuts:
+      Nbjets: "==1"
+      Njets: "<=2"
+      Nleptons: "==0"
+      MET: ">250"
+      dphi_jet_met_min: ">0.5"
+
+  "2b:SR":
+    description: "Signal region, 2 b-tag category"
+    cuts:
+      Nbjets: "==2"
+      Njets: "<=3"
+      Nleptons: "==0"
+      MET: ">250"
+      dphi_jet_met_min: ">0.5"
+
+  "1b:CR_Wlnu":
+    description: "W+jets control region in 1b category (electron or muon)"
+    cuts:
+      Nbjets: "==1"
+      Njets: "==2"
+      Nleptons: "==1"
+      Recoil: ">250"
+      MET: ">100"
+      MT: "<160"
+      dphi_jet_met_min: ">0.5"
+
+  "2b:CR_Top":
+    description: "Top control region in 2b category (electron or muon) - "
+    cuts:
+      Nbjets: "==2"
+      Nleptons: "==1"
+      Recoil: ">250"
+      MT: "<160"
+      NAdditionalJets: ">=1"
+      Njets: ">=3"
+      dphi_jet_met_min: ">0.5"
+
+  "1b:CR_Zll":
+    description: "Z+jets control region in 1b category (electron or muon) - "
+    cuts:
+      Nbjets: "==1"
+      Nleptons: "==2"
+      Recoil: ">250"
+      MllMin: ">70"
+      MllMax: "<110"
+      Njets: "<=2"
+      Jet1Pt: ">100"
+      dphi_jet_met_min: ">0.5"
+
+  "2b:CR_Zll":
+    description: "Z+jets control region in 2b category (electron or muon) - "
+    cuts:
+      Nbjets: "==2"
+      Nleptons: "==2"
+      Recoil: ">250"
+      MllMin: ">70"
+      MllMax: "<110"
+      Njets: "<=3"
+      Jet1Pt: ">100"
+      dphi_jet_met_min: ">0.5"

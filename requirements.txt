@@ -1,0 +1,23 @@
+# Requirements for bbMET Analysis Pipeline
+# Install with: pip install -r requirements.txt
+
+# Core analysis framework
+coffea>=2024.1.0
+awkward>=2.0.0
+numpy>=1.24.0
+
+# Histogramming
+hist>=2.6.0
+
+# ROOT file I/O
+uproot>=5.0.0
+
+# Plotting
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Configuration
+pyyaml>=6.0    # For YAML configuration files
+
+# Optional: for advanced features
+# scipy>=1.10.0  # For statistical functions
