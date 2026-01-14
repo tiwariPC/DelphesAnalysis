@@ -358,8 +358,9 @@ def plot_histogram(histogram: Hist,
     # In batch mode, we don't show plots
 
 
-def plot_signal_vs_background(signal_hist: Optional[Hist],
-                             background_hists: Dict[str, Hist],
+def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
+                             signal_hists: Optional[Dict[str, Hist]] = None,
+                             background_hists: Dict[str, Hist] = None,
                              xlabel: Optional[str] = None,
                              title: Optional[str] = None,
                              output_file: Optional[str] = None,
@@ -369,11 +370,15 @@ def plot_signal_vs_background(signal_hist: Optional[Hist],
                              lumi: float = 139.0):
     """
     Plot signal vs stacked backgrounds using mplhep for CMS styling.
+    Supports overlaying multiple signal points.
 
     Parameters:
     -----------
     signal_hist : Hist or None
-        Signal histogram (None for backgrounds-only plot)
+        Single signal histogram (for backward compatibility)
+    signal_hists : dict, optional
+        Dictionary of {label: histogram} for multiple signal points to overlay
+        If provided, this takes precedence over signal_hist
     background_hists : dict
         Dictionary of {name: histogram} for backgrounds
     xlabel : str
@@ -398,10 +403,18 @@ def plot_signal_vs_background(signal_hist: Optional[Hist],
     # CMS-style figure size
     fig, ax = plt.subplots(figsize=(10, 8))
 
+    # Determine which signal(s) to use
+    signals_to_plot = {}
+    if signal_hists is not None and len(signal_hists) > 0:
+        signals_to_plot = signal_hists
+    elif signal_hist is not None:
+        signals_to_plot = {"Signal": signal_hist}
+
     # Get common binning from first background (or signal if available)
-    if signal_hist is not None:
-        edges = signal_hist.axes[0].edges
-        xlabel = xlabel or signal_hist.axes[0].label or "x"
+    if signals_to_plot:
+        first_sig = list(signals_to_plot.values())[0]
+        edges = first_sig.axes[0].edges
+        xlabel = xlabel or first_sig.axes[0].label or "x"
     else:
         first_bg = list(background_hists.values())[0]
         edges = first_bg.axes[0].edges
@@ -460,16 +473,22 @@ def plot_signal_vs_background(signal_hist: Optional[Hist],
             ax.hist(centers, bins=edges, weights=bg_values,
                    histtype='step', linewidth=2.5, label=label, color=color)
 
-    # Plot signal if provided
-    if signal_hist is not None:
-        signal_values = signal_hist.values()
+    # Plot signal(s) if provided - overlay multiple signals with different colors/linestyles
+    signal_colors = ['#E24A33', '#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#6A994E', '#BC4749']
+    signal_linestyles = ['-', '--', '-.', ':', '-', '--', '-.']
+
+    for i, (sig_label, sig_hist) in enumerate(signals_to_plot.items()):
+        signal_values = sig_hist.values()
+        color = signal_colors[i % len(signal_colors)]
+        linestyle = signal_linestyles[i % len(signal_linestyles)]
         ax.hist(centers, bins=edges, weights=signal_values,
-               histtype='step', linewidth=3.0, label=r'Signal', color='#E24A33', zorder=10)
+               histtype='step', linewidth=3.0, label=sig_label,
+               color=color, linestyle=linestyle, zorder=10)
 
     # Calculate maximum value across all histograms (signal + stacked backgrounds)
     max_value = 0.0
-    if signal_hist is not None:
-        signal_vals = signal_hist.values()
+    for sig_hist in signals_to_plot.values():
+        signal_vals = sig_hist.values()
         if len(signal_vals) > 0:
             max_value = max(max_value, np.max(signal_vals))
 

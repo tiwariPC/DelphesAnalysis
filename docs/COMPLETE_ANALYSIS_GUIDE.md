@@ -15,26 +15,74 @@ The analysis workflow consists of three main steps:
 ### Prerequisites
 
 1. **Signal file**: Delphes ROOT file with signal events
-2. **Background files**: Already configured in `process_regions.py`
-3. **Cross-sections**: Background cross-sections in `bkg.xsec` file
+2. **Background files**: Configured in `config/samples_config.yaml`
+3. **Cross-sections**:
+   - Background cross-sections in `config/background_cross_sections.yaml`
+   - Signal cross-sections in `config/signal_cross_sections.yaml`
 
 ### Run the Analysis
 
+#### Option 1: Single Signal Point
+
+**Using signal cross-section directly:**
+
 ```bash
-python process_regions.py \
+python scripts/process_regions.py \
     --signal-file /path/to/signal.root \
-    --signal-xs 1.0 \
+    --signal-xs 0.0002870400 \
     --signal-ngen 100000 \
     --lumi 139.0 \
     --output-dir output
 ```
 
+**Using signal cross-section from config file (recommended):**
+
+```bash
+python scripts/process_regions.py \
+    --signal-file /path/to/signal.root \
+    --signal-mA 300 \
+    --signal-ma 50 \
+    --signal-ngen 100000 \
+    --lumi 139.0 \
+    --output-dir output
+```
+
+#### Option 2: Multiple Signal Points (Overlaid)
+
+To overlay multiple signal points on the same plots, specify `--signal-file` multiple times. All signals will be plotted together in the same output directory:
+
+```bash
+python scripts/process_regions.py \
+    --signal-file /path/to/signal_mA300_ma50.root \
+    --signal-mA 300 \
+    --signal-ma 50 \
+    --signal-ngen 100000 \
+    --signal-file /path/to/signal_mA500_ma100.root \
+    --signal-mA 500 \
+    --signal-ma 100 \
+    --signal-ngen 100000 \
+    --signal-file /path/to/signal_mA700_ma200.root \
+    --signal-mA 700 \
+    --signal-ma 200 \
+    --signal-ngen 100000 \
+    --lumi 139.0 \
+    --output-dir output
+```
+
+Each signal will appear with a different color and line style in the legend. The output directory is the same for all signals.
+
 **Parameters:**
-- `--signal-file`: Path to your signal ROOT file
-- `--signal-xs`: Signal cross-section in pb
-- `--signal-ngen`: Number of generated events in signal file
+- `--signal-file`: Path to your signal ROOT file (required, can be specified multiple times for overlaying)
+- `--signal-xs`: Signal cross-section in pb (one per --signal-file, optional if using --signal-mA/--signal-ma)
+- `--signal-mA`: Signal mA value in GeV (for cross-section lookup from config, one per --signal-file)
+- `--signal-ma`: Signal ma value in GeV (for cross-section lookup from config, one per --signal-file)
+- `--signal-ngen`: Number of generated events in signal file (required, one per --signal-file)
+- `--signal-label`: Custom label for legend (optional, one per --signal-file, default: "Signal (mA, ma)")
 - `--lumi`: Luminosity in fb^-1 (default: 139.0 for Run-2)
-- `--output-dir`: Output directory (default: "output")
+- `--output-dir`: Output directory (default: "output", same for all signals when overlaying)
+- `--samples-config`: Background samples config file (default: "config/samples_config.yaml")
+- `--background-xsec`: Background cross-sections YAML (default: "config/background_cross_sections.yaml")
+- `--signal-xsec`: Signal cross-sections YAML (default: "config/signal_cross_sections.yaml")
 
 ### What This Produces
 

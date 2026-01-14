@@ -1,0 +1,12 @@
+# Cross-section table for background processes
+# Units: pb (picobarns)
+# Format: process_name: cross_section_value
+
+backgrounds:
+  dyjets: 340.160
+  ttbar: 559.385
+  diboson: 104.530
+  sTop_tchannel: 201.055
+  sTop_tW: 61.521
+  wlnjets: 3486.150
+  znnjets: 1007.100

@@ -1,0 +1,106 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Analysis output
+output/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Data files (large ROOT files)
+*.root
+# Exception: keep example/template ROOT files in genevents if needed
+# !genevents/**/*.root
+
+# Logs and temporary files
+*.log
+*.out
+*.err
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Condor job files
+*.condor
+*.sub
+*.dag
+*.dag.dagman.out
+*.dag.lock
+*.dag.rescue*
+
+# Temporary analysis files
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Combine output
+combine_output/
+higgsCombine*.root
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Project specific
+dumb.file
+*.madevent  # Generated MadGraph files (if not needed in repo)
+
+# Genevents output
+genevents/condorJob/*.out
+genevents/condorJob/*.err
+genevents/condorJob/logs/

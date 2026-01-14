@@ -57,29 +57,91 @@ PLOT_BINNING = {
     "min_dphi": {"range": (0, 3.2), "bins": 32, "variable": False},  # Alias for dphi_jet_met_min (matches StackPlotter: 0-3.2)
 }
 
+def load_background_cross_sections(config_file="config/background_cross_sections.yaml"):
+    """
+    Load background cross-sections from YAML file.
+
+    Parameters:
+    -----------
+    config_file : str
+        Path to background cross-sections YAML file
+
+    Returns:
+    --------
+    background_xs : dict
+        Dictionary mapping bg_name -> cross_section (pb)
+    """
+    background_xs = {}
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        if config and 'backgrounds' in config:
+            background_xs = {k: float(v) for k, v in config['backgrounds'].items()}
+    except FileNotFoundError:
+        print(f"  ⚠ Warning: Background cross-sections file not found: {config_file}")
+    except Exception as e:
+        print(f"  ⚠ Warning: Error loading background cross-sections: {e}")
+
+    return background_xs
+
+
+def load_signal_cross_sections(config_file="config/signal_cross_sections.yaml"):
+    """
+    Load signal cross-sections from YAML file.
+
+    Parameters:
+    -----------
+    config_file : str
+        Path to signal cross-sections YAML file
+
+    Returns:
+    --------
+    signal_xs : dict
+        Dictionary mapping (mA, ma) -> cross_section (pb)
+        Format: {(mA_value, ma_value): xs_value}
+    """
+    signal_xs = {}
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+
+        if config and 'signals' in config:
+            for mA, ma_dict in config['signals'].items():
+                mA_int = int(mA)
+                for ma, xs in ma_dict.items():
+                    ma_int = int(ma)
+                    signal_xs[(mA_int, ma_int)] = float(xs)
+    except FileNotFoundError:
+        print(f"  ⚠ Warning: Signal cross-sections file not found: {config_file}")
+    except Exception as e:
+        print(f"  ⚠ Warning: Error loading signal cross-sections: {e}")
+
+    return signal_xs
+
+
 def load_samples_config(config_file):
     """
     Load background samples configuration from YAML file.
+    Only loads file paths - cross-sections are loaded separately from background_cross_sections.yaml
 
     Returns:
         tuple: (background_files_dict, background_xs_dict)
             - background_files_dict: dict mapping bg_name -> file_path
-            - background_xs_dict: dict mapping bg_name -> cross_section (pb)
+            - background_xs_dict: dict mapping bg_name -> cross_section (pb) - empty dict, use load_background_cross_sections() instead
     """
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
 
     background_files = {}
-    background_xs = {}
 
     if 'backgrounds' in config:
         for bg_name, bg_config in config['backgrounds'].items():
             if 'file' in bg_config:
                 background_files[bg_name] = bg_config['file']
-            if 'cross_section' in bg_config:
-                background_xs[bg_name] = float(bg_config['cross_section'])
+            # Note: cross_section removed from samples_config.yaml - use background_cross_sections.yaml instead
 
-    return background_files, background_xs
+    return background_files, {}  # Return empty dict for xs - must load separately
 
 
 def parse_xsec_file(xsec_file):
@@ -579,12 +641,21 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
 
 def main():
     parser = argparse.ArgumentParser(description="Process samples for all regions")
-    parser.add_argument("--signal-file", type=str, required=True, help="Signal ROOT file")
-    parser.add_argument("--signal-xs", type=float, required=True, help="Signal cross-section in pb")
-    parser.add_argument("--signal-ngen", type=int, required=True, help="Signal number of generated events")
+    parser.add_argument("--signal-file", type=str, action='append', help="Signal ROOT file (can be specified multiple times for overlaying)")
+    parser.add_argument("--signal-xs", type=float, action='append', help="Signal cross-section in pb (one per --signal-file, or use --signal-mA/--signal-ma)")
+    parser.add_argument("--signal-mA", type=int, action='append', help="Signal mA value (for cross-section lookup, one per --signal-file)")
+    parser.add_argument("--signal-ma", type=int, action='append', help="Signal ma value (for cross-section lookup, one per --signal-file)")
+    parser.add_argument("--signal-ngen", type=int, action='append', help="Signal number of generated events (one per --signal-file)")
+    parser.add_argument("--signal-label", type=str, action='append', help="Signal label for legend (one per --signal-file, default: 'Signal (mA, ma)')")
     parser.add_argument("--samples-config", type=str,
                        default="config/samples_config.yaml",
                        help="Samples configuration file (YAML with background files and cross-sections)")
+    parser.add_argument("--background-xsec", type=str,
+                       default="config/background_cross_sections.yaml",
+                       help="Background cross-sections YAML file")
+    parser.add_argument("--signal-xsec", type=str,
+                       default="config/signal_cross_sections.yaml",
+                       help="Signal cross-sections YAML file")
     parser.add_argument("--xsec-file", type=str, default=None,
                        help="Background cross-section file (legacy, overrides YAML if provided)")
     parser.add_argument("--lumi", type=float, default=139.0, help="Luminosity in fb^-1")
@@ -599,28 +670,94 @@ def main():
     plots_dir.mkdir(exist_ok=True)
 
     regions_config = load_regions(args.cuts_config)
-    background_files, bg_xs = load_samples_config(args.samples_config)
+    background_files, _ = load_samples_config(args.samples_config)  # Only load file paths
 
+    # Load background cross-sections from dedicated file (single source of truth)
+    bg_xs = load_background_cross_sections(args.background_xsec)
+
+    # Legacy support: override with xsec-file if provided
     if args.xsec_file:
         legacy_xs = parse_xsec_file(args.xsec_file)
         for bg_name, xs_value in legacy_xs.items():
             bg_xs[bg_name] = xs_value
 
-    signal_data = load_sample_and_build_objects(args.signal_file, args.cuts_config)
-    if signal_data is None:
-        print("  ✗ Failed to load signal")
+    # Process multiple signals if provided
+    if not args.signal_file:
+        print("  ✗ Error: Must provide at least one --signal-file")
         return
 
-    signal_outputs = {}
-    for region_name in regions_config.keys():
-        output = process_sample_for_region(
-            "signal", signal_data["events"], signal_data["jets"], signal_data["bjets"],
-            signal_data["met"], signal_data["electrons"], signal_data["muons"],
-            signal_data["additional_vars"], args.signal_xs, args.signal_ngen,
-            region_name, regions_config, args.lumi, output_dir, args.cuts_config
-        )
-        if output:
-            signal_outputs[region_name] = output
+    signal_files = args.signal_file
+    signal_xs_list = args.signal_xs or [None] * len(signal_files)
+    signal_mA_list = args.signal_mA or [None] * len(signal_files)
+    signal_ma_list = args.signal_ma or [None] * len(signal_files)
+    signal_ngen_list = args.signal_ngen or [None] * len(signal_files)
+    signal_labels = args.signal_label or [None] * len(signal_files)
+
+    # Ensure all lists have the same length
+    n_signals = len(signal_files)
+    if len(signal_xs_list) != n_signals:
+        signal_xs_list = signal_xs_list[:n_signals] if len(signal_xs_list) > n_signals else signal_xs_list + [None] * (n_signals - len(signal_xs_list))
+    if len(signal_mA_list) != n_signals:
+        signal_mA_list = signal_mA_list[:n_signals] if len(signal_mA_list) > n_signals else signal_mA_list + [None] * (n_signals - len(signal_mA_list))
+    if len(signal_ma_list) != n_signals:
+        signal_ma_list = signal_ma_list[:n_signals] if len(signal_ma_list) > n_signals else signal_ma_list + [None] * (n_signals - len(signal_ma_list))
+    if len(signal_ngen_list) != n_signals:
+        print(f"  ✗ Error: Must provide --signal-ngen for each signal file ({n_signals} files)")
+        return
+    if len(signal_labels) != n_signals:
+        signal_labels = signal_labels[:n_signals] if len(signal_labels) > n_signals else signal_labels + [None] * (n_signals - len(signal_labels))
+
+    # Load signal cross-sections dictionary
+    signal_xs_dict = load_signal_cross_sections(args.signal_xsec)
+
+    # Process each signal
+    all_signal_outputs = []  # List of {region_name: output} for each signal
+    signal_info_list = []  # List of (label, xs, ngen) for each signal
+
+    for i, (sig_file, sig_xs, sig_mA, sig_ma, sig_ngen, sig_label) in enumerate(zip(
+        signal_files, signal_xs_list, signal_mA_list, signal_ma_list, signal_ngen_list, signal_labels
+    )):
+        # Determine cross-section
+        if sig_xs is None:
+            if sig_mA is not None and sig_ma is not None:
+                signal_key = (sig_mA, sig_ma)
+                if signal_key in signal_xs_dict:
+                    sig_xs = signal_xs_dict[signal_key]
+                    print(f"  ✓ Signal {i+1}: Loaded cross-section from config: mA={sig_mA}, ma={sig_ma}, xs={sig_xs:.10f} pb")
+                else:
+                    print(f"  ✗ Error: Signal cross-section not found for mA={sig_mA}, ma={sig_ma}")
+                    continue
+            else:
+                print(f"  ✗ Error: Signal {i+1}: Must provide either --signal-xs or both --signal-mA and --signal-ma")
+                continue
+
+        # Generate label if not provided
+        if sig_label is None:
+            if sig_mA is not None and sig_ma is not None:
+                sig_label = f"Signal (mA={sig_mA}, ma={sig_ma})"
+            else:
+                sig_label = f"Signal {i+1}"
+
+        signal_info_list.append((sig_label, sig_xs, sig_ngen))
+
+        # Load and process signal
+        signal_data = load_sample_and_build_objects(sig_file, args.cuts_config)
+        if signal_data is None:
+            print(f"  ✗ Failed to load signal {i+1}: {sig_file}")
+            continue
+
+        signal_outputs = {}
+        for region_name in regions_config.keys():
+            output = process_sample_for_region(
+                sig_label, signal_data["events"], signal_data["jets"], signal_data["bjets"],
+                signal_data["met"], signal_data["electrons"], signal_data["muons"],
+                signal_data["additional_vars"], sig_xs, sig_ngen,
+                region_name, regions_config, args.lumi, output_dir, args.cuts_config
+            )
+            if output:
+                signal_outputs[region_name] = output
+
+        all_signal_outputs.append(signal_outputs)
 
     background_outputs = {}
     for bg_name, bg_file in background_files.items():
@@ -701,10 +838,12 @@ def main():
         if bg_cutflows:
             plot_cutflow(background_cutflows=bg_cutflows, output_file=str(region_dir / "cutflow.pdf"), lumi=args.lumi)
 
-        # Collect histograms for each observable
-        signal_hist = None
-        if region_name in signal_outputs:
-            signal_hist = signal_outputs[region_name]["histograms"]
+        # Collect histograms for each observable - overlay all signals
+        signal_hists = {}  # Dictionary of {label: {obs_name: hist}}
+        for i, signal_outputs in enumerate(all_signal_outputs):
+            if region_name in signal_outputs:
+                sig_label = signal_info_list[i][0]
+                signal_hists[sig_label] = signal_outputs[region_name]["histograms"]
 
         bg_hists = {}
         for bg_name in background_outputs:
@@ -742,20 +881,24 @@ def main():
             if not bg_hists_obs:
                 continue
 
-            signal_hist_obs = None
-            if region_type == "SR" and signal_hist and obs_name in signal_hist:
-                signal_hist_obs = signal_hist.get(obs_name)
-                if signal_hist_obs is not None:
-                    signal_values = signal_hist_obs.values()
-                    if len(signal_values) == 0 or np.sum(signal_values) == 0:
-                        signal_hist_obs = None
+            # Collect all signal histograms for this observable
+            signal_hists_obs = {}
+            if region_type == "SR":
+                for sig_label, sig_hists in signal_hists.items():
+                    if obs_name in sig_hists:
+                        sig_hist_obs = sig_hists[obs_name]
+                        signal_values = sig_hist_obs.values()
+                        if len(signal_values) > 0 and np.sum(signal_values) > 0:
+                            signal_hists_obs[sig_label] = sig_hist_obs
 
             try:
                 first_bg_hist = list(bg_hists_obs.values())[0]
                 xlabel_from_hist = first_bg_hist.axes[0].label if hasattr(first_bg_hist.axes[0], 'label') else None
+                # Use signal_hists parameter for multiple signals, signal_hist for backward compatibility
                 plot_signal_vs_background(
-                    signal_hist_obs,
-                    bg_hists_obs,
+                    signal_hist=None if signal_hists_obs else None,
+                    signal_hists=signal_hists_obs if signal_hists_obs else None,
+                    background_hists=bg_hists_obs,
                     xlabel=xlabel_from_hist,
                     output_file=str(region_dir / f"{obs_name}.pdf"),
                     lumi=args.lumi
@@ -765,11 +908,13 @@ def main():
                 root_file = region_dir / f"{obs_name}.root"
                 try:
                     with uproot.recreate(str(root_file)) as f:
-                        # Save signal histogram if available
-                        if signal_hist_obs is not None:
-                            values = signal_hist_obs.values()
-                            edges = signal_hist_obs.axes[0].edges
-                            f["signal"] = (values, edges)
+                        # Save all signal histograms
+                        for sig_label, sig_hist_obs in signal_hists_obs.items():
+                            values = sig_hist_obs.values()
+                            edges = sig_hist_obs.axes[0].edges
+                            # Use sanitized label for ROOT key (no special characters)
+                            root_key = sig_label.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "").replace("=", "")
+                            f[root_key] = (values, edges)
 
                         # Save background histograms
                         for bg_name, bg_hist in bg_hists_obs.items():
@@ -784,9 +929,13 @@ def main():
                 import traceback
                 traceback.print_exc()
 
-        if region_name in signal_outputs and bg_cutflows:
-            obs_name = "met" if region_type == "SR" else "recoil"
-            signal_yield = signal_outputs[region_name]["n_selected"] * (args.signal_xs * args.lumi * 1000.0) / args.signal_ngen
+        # Generate datacard using first signal (for Combine compatibility)
+        if all_signal_outputs and len(all_signal_outputs) > 0 and bg_cutflows:
+            first_signal_outputs = all_signal_outputs[0]
+            if region_name in first_signal_outputs:
+                obs_name = "met" if region_type == "SR" else "recoil"
+                first_sig_label, first_sig_xs, first_sig_ngen = signal_info_list[0]
+                signal_yield = first_signal_outputs[region_name]["n_selected"] * (first_sig_xs * args.lumi * 1000.0) / first_sig_ngen
             bg_rates = {}
             for bg_name in background_outputs:
                 if region_name in background_outputs[bg_name]:
@@ -828,8 +977,10 @@ def main():
             else:
                 main_observable = "cost_star" if region_category == "2b" else "recoil"
             shapes_file = region_dir / "shapes.root"
+            # Use first signal for shapes file (Combine compatibility)
+            first_signal_hist = signal_hists[signal_info_list[0][0]] if signal_hists else None
             success = create_shapes_file(
-                signal_hist=signal_hist,
+                signal_hist=first_signal_hist,
                 background_hists=bg_hists,
                 bin_name=bin_name,
                 output_file=str(shapes_file),
