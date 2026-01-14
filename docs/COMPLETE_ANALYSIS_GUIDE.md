@@ -31,7 +31,7 @@ python scripts/process_regions.py \
     --signal-file /path/to/signal.root \
     --signal-xs 0.0002870400 \
     --signal-ngen 100000 \
-    --lumi 139.0 \
+    --lumi 290.0 \
     --output-dir output
 ```
 
@@ -43,7 +43,7 @@ python scripts/process_regions.py \
     --signal-mA 300 \
     --signal-ma 50 \
     --signal-ngen 100000 \
-    --lumi 139.0 \
+    --lumi 290.0 \
     --output-dir output
 ```
 
@@ -65,7 +65,7 @@ python scripts/process_regions.py \
     --signal-mA 700 \
     --signal-ma 200 \
     --signal-ngen 100000 \
-    --lumi 139.0 \
+    --lumi 290.0 \
     --output-dir output
 ```
 
@@ -78,7 +78,7 @@ Each signal will appear with a different color and line style in the legend. The
 - `--signal-ma`: Signal ma value in GeV (for cross-section lookup from config, one per --signal-file)
 - `--signal-ngen`: Number of generated events in signal file (required, one per --signal-file)
 - `--signal-label`: Custom label for legend (optional, one per --signal-file, default: "Signal (mA, ma)")
-- `--lumi`: Luminosity in fb^-1 (default: 139.0 for Run-2)
+- `--lumi`: Luminosity in fb^-1 (default: 290.0 for Run3)
 - `--output-dir`: Output directory (default: "output", same for all signals when overlaying)
 - `--samples-config`: Background samples config file (default: "config/samples_config.yaml")
 - `--background-xsec`: Background cross-sections YAML (default: "config/background_cross_sections.yaml")
@@ -243,7 +243,7 @@ python process_regions.py \
     --signal-file /Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bbdm_2hdma_type1_case1/Events/sig_bbdm_delphes_events.root \
     --signal-xs 1.0 \
     --signal-ngen 100000 \
-    --lumi 139.0 \
+    --lumi 290.0 \
     --output-dir output_ma50
 ```
 

@@ -111,8 +111,68 @@ def discover_background_files(background_dir: Path) -> Dict[str, Path]:
     return background_files
 
 
-def count_events_in_root_file(root_file: Path) -> Optional[int]:
-    """Count number of events in a ROOT file using uproot."""
+def get_total_weight_from_root_file(root_file: Path, weight_hist_name: str = "h_total_mcweight") -> Optional[float]:
+    """
+    Get total MC weight from histogram in ROOT file (matches StackPlotter normalization).
+
+    Parameters:
+    -----------
+    root_file : Path
+        Path to ROOT file
+    weight_hist_name : str
+        Name of histogram containing total MC weight (default: "h_total_mcweight")
+
+    Returns:
+    --------
+    total_weight : float or None
+        Integral of weight histogram, or None if not found
+    """
+    try:
+        import uproot
+        with uproot.open(str(root_file)) as file:
+            # Check if histogram exists
+            if weight_hist_name in file:
+                hist = file[weight_hist_name]
+                # Get integral (sum of all bin contents)
+                total_weight = hist.values().sum()
+                return total_weight
+            else:
+                # Try alternative names
+                alt_names = ["h_total_mcweight", "h_total_weight", "h_total", "total_weight"]
+                for alt_name in alt_names:
+                    if alt_name in file:
+                        hist = file[alt_name]
+                        total_weight = hist.values().sum()
+                        return total_weight
+                return None
+    except Exception as e:
+        return None
+
+
+def count_events_in_root_file(root_file: Path, use_weight_hist: bool = True) -> Optional[float]:
+    """
+    Count number of events in a ROOT file.
+    If use_weight_hist is True, tries to get total weight from histogram first (matches StackPlotter).
+
+    Parameters:
+    -----------
+    root_file : Path
+        Path to ROOT file
+    use_weight_hist : bool
+        If True, try to get total weight from h_total_mcweight histogram first (default: True)
+
+    Returns:
+    --------
+    ngen : float or int
+        Total weight from histogram if available, otherwise raw event count
+    """
+    # First try to get total weight from histogram (matches StackPlotter normalization)
+    if use_weight_hist:
+        total_weight = get_total_weight_from_root_file(root_file)
+        if total_weight is not None and total_weight > 0:
+            return total_weight
+
+    # Fall back to counting events
     try:
         import uproot
         with uproot.open(str(root_file)) as file:
@@ -134,12 +194,13 @@ def build_process_regions_command(
     signal_files: List[Tuple[Path, int, int]],
     background_files: Dict[str, Path],
     signal_ngen: Optional[int] = None,
-    lumi: float = 139.0,
+    lumi: float = 290.0,
     output_dir: str = "output",
     signal_xsec_file: str = "config/signal_cross_sections.yaml",
     background_xsec_file: str = "config/background_cross_sections.yaml",
     cuts_config: str = "config/cuts_config.yaml",
-    auto_ngen: bool = True
+    auto_ngen: bool = True,
+    signal_scale: float = 1.0
 ) -> List[str]:
     """
     Build the command to run process_regions.py with discovered files.
@@ -181,6 +242,9 @@ def build_process_regions_command(
 
     # Add other options
     cmd.extend(["--lumi", str(lumi)])
+
+    if signal_scale != 1.0:
+        cmd.extend(["--signal-scale", str(signal_scale)])
     cmd.extend(["--output-dir", output_dir])
     cmd.extend(["--signal-xsec", signal_xsec_file])
     cmd.extend(["--background-xsec", background_xsec_file])
@@ -238,8 +302,8 @@ def main():
                        help="Directory containing background ROOT files")
     parser.add_argument("--signal-ngen", type=int, default=None,
                        help="Number of generated events for all signals (if not provided, will try to count from files)")
-    parser.add_argument("--lumi", type=float, default=139.0,
-                       help="Luminosity in fb^-1 (default: 139.0)")
+    parser.add_argument("--lumi", type=float, default=290.0,
+                       help="Luminosity in fb^-1 (default: 290.0)")
     parser.add_argument("--output-dir", type=str, default="output",
                        help="Output directory (default: output)")
     parser.add_argument("--samples-config", type=str, default="config/samples_config.yaml",
@@ -254,6 +318,8 @@ def main():
                        help="Only print the command, don't run it")
     parser.add_argument("--no-auto-ngen", action="store_true",
                        help="Don't automatically count events from ROOT files")
+    parser.add_argument("--signal-scale", type=float, default=1.0,
+                       help="Scale factor for signal histograms in plots only (default: 1.0, no scaling)")
 
     args = parser.parse_args()
 
@@ -299,7 +365,8 @@ def main():
         signal_xsec_file=args.signal_xsec,
         background_xsec_file=args.background_xsec,
         cuts_config=args.cuts_config,
-        auto_ngen=not args.no_auto_ngen
+        auto_ngen=not args.no_auto_ngen,
+        signal_scale=args.signal_scale
     )
 
     # Check if we have any signals

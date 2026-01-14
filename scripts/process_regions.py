@@ -8,6 +8,7 @@ Optimized: Load each ROOT file once, process all regions.
 
 import sys
 import argparse
+import re
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -168,8 +169,70 @@ def parse_xsec_file(xsec_file):
     return xs_dict
 
 
-def count_events_in_root_file(root_file, tree_name="Delphes"):
-    """Count number of events in a ROOT file."""
+def get_total_weight_from_root_file(root_file, weight_hist_name="h_total_mcweight"):
+    """
+    Get total MC weight from histogram in ROOT file (matches StackPlotter normalization).
+
+    Parameters:
+    -----------
+    root_file : str or Path
+        Path to ROOT file
+    weight_hist_name : str
+        Name of histogram containing total MC weight (default: "h_total_mcweight")
+
+    Returns:
+    --------
+    total_weight : float or None
+        Integral of weight histogram, or None if not found
+    """
+    try:
+        import uproot
+        with uproot.open(root_file) as file:
+            # Check if histogram exists
+            if weight_hist_name in file:
+                hist = file[weight_hist_name]
+                # Get integral (sum of all bin contents)
+                total_weight = hist.values().sum()
+                return total_weight
+            else:
+                # Try alternative names
+                alt_names = ["h_total_mcweight", "h_total_weight", "h_total", "total_weight"]
+                for alt_name in alt_names:
+                    if alt_name in file:
+                        hist = file[alt_name]
+                        total_weight = hist.values().sum()
+                        return total_weight
+                return None
+    except Exception as e:
+        return None
+
+
+def count_events_in_root_file(root_file, tree_name="Delphes", use_weight_hist=True):
+    """
+    Count number of events in a ROOT file.
+    If use_weight_hist is True, tries to get total weight from histogram first (matches StackPlotter).
+
+    Parameters:
+    -----------
+    root_file : str or Path
+        Path to ROOT file
+    tree_name : str
+        Name of TTree (default: "Delphes")
+    use_weight_hist : bool
+        If True, try to get total weight from h_total_mcweight histogram first (default: True)
+
+    Returns:
+    --------
+    ngen : float or int
+        Total weight from histogram if available, otherwise raw event count
+    """
+    # First try to get total weight from histogram (matches StackPlotter normalization)
+    if use_weight_hist:
+        total_weight = get_total_weight_from_root_file(root_file)
+        if total_weight is not None and total_weight > 0:
+            return total_weight
+
+    # Fall back to counting events
     try:
         with uproot.open(root_file) as file:
             tree = file[tree_name]
@@ -368,7 +431,7 @@ def calculate_dphi_jet_met_min_all_events(jets, met):
 
 def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, muons,
                               additional_vars, xs_pb, ngen, region_name, regions_config,
-                              lumi_fb=139.0, output_dir=None, cuts_config=None):
+                              lumi_fb=290.0, output_dir=None, cuts_config=None):
     """Process a sample for a specific region using pre-loaded events and objects."""
     # Build cutflow step by step - apply cuts in the order they appear in region config
     from src.regions import parse_cut_condition
@@ -426,7 +489,13 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
         if cut_name in handled_cuts:
             print(f"  ⚠ WARNING: Cut '{cut_name}' appears multiple times in {region_name} - only last value used")
         handled_cuts.add(cut_name)
-        if cut_name == 'Njets':
+        if cut_name == 'NjetsMin':
+            # NjetsMin: minimum number of jets (e.g., "1" means njets >= 1)
+            threshold = float(str(cut_value).replace('>=', '').replace('>', '').strip())
+            mask = mask & (njets >= threshold)
+            cutflow["NjetsMin"] = ak.sum(mask) * weight
+
+        elif cut_name == 'Njets':
             mask = mask & parse_cut_condition(cut_value, njets)
             cutflow["Njets"] = ak.sum(mask) * weight
 
@@ -658,9 +727,10 @@ def main():
                        help="Signal cross-sections YAML file")
     parser.add_argument("--xsec-file", type=str, default=None,
                        help="Background cross-section file (legacy, overrides YAML if provided)")
-    parser.add_argument("--lumi", type=float, default=139.0, help="Luminosity in fb^-1")
+    parser.add_argument("--lumi", type=float, default=290.0, help="Luminosity in fb^-1")
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument("--cuts-config", type=str, default="config/cuts_config.yaml", help="Cuts configuration file")
+    parser.add_argument("--signal-scale", type=float, default=1.0, help="Scale factor for signal histograms in plots only (default: 1.0, no scaling)")
 
     args = parser.parse_args()
 
@@ -712,7 +782,7 @@ def main():
 
     # Process each signal
     all_signal_outputs = []  # List of {region_name: output} for each signal
-    signal_info_list = []  # List of (label, xs, ngen) for each signal
+    signal_info_list = []  # List of (label, xs, ngen, mA, ma) for each signal
 
     for i, (sig_file, sig_xs, sig_mA, sig_ma, sig_ngen, sig_label) in enumerate(zip(
         signal_files, signal_xs_list, signal_mA_list, signal_ma_list, signal_ngen_list, signal_labels
@@ -738,7 +808,7 @@ def main():
             else:
                 sig_label = f"Signal {i+1}"
 
-        signal_info_list.append((sig_label, sig_xs, sig_ngen))
+        signal_info_list.append((sig_label, sig_xs, sig_ngen, sig_mA, sig_ma))
 
         # Load and process signal
         signal_data = load_sample_and_build_objects(sig_file, args.cuts_config)
@@ -891,24 +961,34 @@ def main():
                         if len(signal_values) > 0 and np.sum(signal_values) > 0:
                             signal_hists_obs[sig_label] = sig_hist_obs
 
+            # Scale signal histograms for plotting only (if scale factor != 1.0)
+            signal_hists_obs_scaled = {}
+            if args.signal_scale != 1.0 and signal_hists_obs:
+                for sig_label, sig_hist_obs in signal_hists_obs.items():
+                    # Create a scaled copy for plotting (original remains unchanged)
+                    scaled_hist = sig_hist_obs * args.signal_scale
+                    signal_hists_obs_scaled[sig_label] = scaled_hist
+            else:
+                signal_hists_obs_scaled = signal_hists_obs
+
             try:
                 first_bg_hist = list(bg_hists_obs.values())[0]
                 xlabel_from_hist = first_bg_hist.axes[0].label if hasattr(first_bg_hist.axes[0], 'label') else None
                 # Use signal_hists parameter for multiple signals, signal_hist for backward compatibility
                 plot_signal_vs_background(
-                    signal_hist=None if signal_hists_obs else None,
-                    signal_hists=signal_hists_obs if signal_hists_obs else None,
+                    signal_hist=None if signal_hists_obs_scaled else None,
+                    signal_hists=signal_hists_obs_scaled if signal_hists_obs_scaled else None,
                     background_hists=bg_hists_obs,
                     xlabel=xlabel_from_hist,
                     output_file=str(region_dir / f"{obs_name}.pdf"),
                     lumi=args.lumi
                 )
 
-                # Save ROOT file for this observable
+                # Save ROOT file for this observable (use original, unscaled histograms)
                 root_file = region_dir / f"{obs_name}.root"
                 try:
                     with uproot.recreate(str(root_file)) as f:
-                        # Save all signal histograms
+                        # Save all signal histograms (original, not scaled)
                         for sig_label, sig_hist_obs in signal_hists_obs.items():
                             values = sig_hist_obs.values()
                             edges = sig_hist_obs.axes[0].edges
@@ -929,13 +1009,9 @@ def main():
                 import traceback
                 traceback.print_exc()
 
-        # Generate datacard using first signal (for Combine compatibility)
+        # Generate datacard for each signal point separately
         if all_signal_outputs and len(all_signal_outputs) > 0 and bg_cutflows:
-            first_signal_outputs = all_signal_outputs[0]
-            if region_name in first_signal_outputs:
-                obs_name = "met" if region_type == "SR" else "recoil"
-                first_sig_label, first_sig_xs, first_sig_ngen = signal_info_list[0]
-                signal_yield = first_signal_outputs[region_name]["n_selected"] * (first_sig_xs * args.lumi * 1000.0) / first_sig_ngen
+            # Calculate background rates once (same for all signals)
             bg_rates = {}
             for bg_name in background_outputs:
                 if region_name in background_outputs[bg_name]:
@@ -960,32 +1036,155 @@ def main():
                 dominant_bkg = max(bg_rates.keys(), key=lambda x: bg_rates[x])
 
             bin_name = region_type
-            datacard = generate_datacard(
-                signal_name="sig",
-                signal_rate=signal_yield,
-                backgrounds=bg_rates,
-                region_type=region_type,
-                bin_name=bin_name,
-                dominant_bkg=dominant_bkg,
-                observation=-1,
-                shapes_file="shapes.root"
-            )
-            save_datacard(datacard, str(region_dir / "datacard.txt"))
-
             if region_type == "SR":
                 main_observable = "cost_star" if region_category == "2b" else "met"
             else:
                 main_observable = "cost_star" if region_category == "2b" else "recoil"
-            shapes_file = region_dir / "shapes.root"
-            # Use first signal for shapes file (Combine compatibility)
-            first_signal_hist = signal_hists[signal_info_list[0][0]] if signal_hists else None
-            success = create_shapes_file(
-                signal_hist=first_signal_hist,
-                background_hists=bg_hists,
-                bin_name=bin_name,
-                output_file=str(shapes_file),
-                main_observable=main_observable
-            )
+
+            # Generate datacard and shapes file for each signal point
+            for i, signal_outputs in enumerate(all_signal_outputs):
+                if region_name in signal_outputs:
+                    sig_label, sig_xs, sig_ngen, sig_mA, sig_ma = signal_info_list[i]
+                    signal_yield = signal_outputs[region_name]["n_selected"] * (sig_xs * args.lumi * 1000.0) / sig_ngen
+
+                    # Use stored mA and ma values for filename
+                    if sig_mA is not None and sig_ma is not None:
+                        datacard_filename = f"datacard_mA{sig_mA}_ma{sig_ma}.txt"
+                        shapes_filename = f"shapes_mA{sig_mA}_ma{sig_ma}.root"
+                    else:
+                        # Fallback: try to extract from label, then use index
+                        sig_match = re.search(r'mA(\d+).*ma(\d+)', sig_label, re.IGNORECASE)
+                        if sig_match:
+                            sig_mA = sig_match.group(1)
+                            sig_ma = sig_match.group(2)
+                            datacard_filename = f"datacard_mA{sig_mA}_ma{sig_ma}.txt"
+                            shapes_filename = f"shapes_mA{sig_mA}_ma{sig_ma}.root"
+                        else:
+                            # Last resort: use index
+                            datacard_filename = f"datacard_sig{i}.txt"
+                            shapes_filename = f"shapes_sig{i}.root"
+
+                    datacard = generate_datacard(
+                        signal_name="sig",
+                        signal_rate=signal_yield,
+                        backgrounds=bg_rates,
+                        region_type=region_type,
+                        bin_name=bin_name,
+                        dominant_bkg=dominant_bkg,
+                        observation=-1,
+                        shapes_file=shapes_filename
+                    )
+                    save_datacard(datacard, str(region_dir / datacard_filename))
+
+                    # Create shapes file for this signal
+                    signal_hist = signal_hists[sig_label] if sig_label in signal_hists else None
+                    shapes_file = region_dir / shapes_filename
+                    success = create_shapes_file(
+                        signal_hist=signal_hist,
+                        background_hists=bg_hists,
+                        bin_name=bin_name,
+                        output_file=str(shapes_file),
+                        main_observable=main_observable
+                    )
+
+    # Create combined datacard for each signal point
+    print("\n" + "="*70)
+    print("Creating Combined Datacards for Each Signal Point")
+    print("="*70)
+    try:
+        from scripts.create_combined_datacard import parse_datacard, combine_datacards
+        from src.bbdmDelphes import combine_shapes_files
+
+        plots_dir = output_dir / "plots"
+
+        # Group datacards by signal point
+        signal_datacards = {}  # {signal_key: [(datacard_file, region_name), ...]}
+
+        # Find all datacard files in region directories
+        for region_dir in plots_dir.iterdir():
+            if region_dir.is_dir():
+                # Look for datacard files with signal identifiers
+                for datacard_file in region_dir.glob("datacard_*.txt"):
+                    # Extract signal identifier from filename
+                    match = re.search(r'datacard_mA(\d+)_ma(\d+)\.txt', datacard_file.name)
+                    if match:
+                        sig_key = f"mA{match.group(1)}_ma{match.group(2)}"
+                    else:
+                        # Fallback: try to extract from other patterns
+                        match = re.search(r'datacard_sig(\d+)\.txt', datacard_file.name)
+                        if match:
+                            sig_key = f"sig{match.group(1)}"
+                        else:
+                            continue
+
+                    if sig_key not in signal_datacards:
+                        signal_datacards[sig_key] = []
+                    signal_datacards[sig_key].append((datacard_file, region_dir.name))
+
+        if not signal_datacards:
+            print("  ⚠ No signal-specific datacards found to combine")
+        else:
+            # Create combined datacard for each signal point
+            for sig_key, datacards in signal_datacards.items():
+                print(f"\n  Processing signal point: {sig_key}")
+                print(f"    Found {len(datacards)} datacards:")
+                for _, region_name in datacards:
+                    print(f"      - {region_name}")
+
+                # Parse all datacards for this signal
+                datacard_infos = []
+                for datacard_file, region_name in datacards:
+                    try:
+                        info = parse_datacard(datacard_file)
+                        datacard_infos.append(info)
+                    except Exception as e:
+                        print(f"      ⚠ Warning: Could not parse {region_name}: {e}")
+
+                if datacard_infos:
+                    # Combine datacards for this signal
+                    combined_datacard = combine_datacards(datacard_infos, output_dir=output_dir)
+
+                    # Save combined datacard in plots directory
+                    combined_datacard_file = plots_dir / f"combined_datacard_{sig_key}.txt"
+                    with open(combined_datacard_file, 'w') as f:
+                        f.write(combined_datacard)
+
+                    print(f"\n    ✓ Combined datacard saved to: {combined_datacard_file}")
+                    print(f"      Bins: {len(datacard_infos)}")
+                    print(f"      Processes: {len(set().union(*[info['processes'] for info in datacard_infos]))}")
+
+                    # Try to create combined shapes file for this signal
+                    shapes_files = []
+                    bin_names_list = []
+                    datacard_to_info = {}
+                    for i, (dc_file, rn) in enumerate(datacards):
+                        if i < len(datacard_infos):
+                            datacard_to_info[dc_file] = datacard_infos[i]
+
+                    for datacard_file, region_name in datacards:
+                        # Find corresponding shapes file
+                        shapes_file = None
+                        # Try to match shapes filename with datacard filename
+                        shapes_pattern = datacard_file.name.replace("datacard_", "shapes_").replace(".txt", ".root")
+                        shapes_file = datacard_file.parent / shapes_pattern
+
+                        if shapes_file.exists() and datacard_file in datacard_to_info:
+                            bin_name = datacard_to_info[datacard_file].get("bin_name")
+                            if bin_name:
+                                shapes_files.append(str(shapes_file))
+                                bin_names_list.append(bin_name)
+
+                    if shapes_files and len(shapes_files) == len(bin_names_list):
+                        combined_shapes_file = plots_dir / f"combined_shapes_{sig_key}.root"
+                        success = combine_shapes_files(shapes_files, bin_names_list, str(combined_shapes_file))
+                        if success:
+                            print(f"    ✓ Combined shapes file saved to: {combined_shapes_file}")
+                        else:
+                            print(f"    ⚠ Could not create combined shapes file")
+    except Exception as e:
+        print(f"  ⚠ Warning: Could not create combined datacards: {e}")
+        import traceback
+        traceback.print_exc()
 
     print("\n✓ Analysis complete!")
 

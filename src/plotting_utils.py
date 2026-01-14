@@ -30,7 +30,7 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
                  sample_name: str = "Sample",
                  output_file: Optional[str] = None,
                  normalize: bool = False,
-                 lumi: float = 139.0,
+                 lumi: float = 290.0,
                  background_cutflows: Optional[Dict[str, Dict[str, int]]] = None):
     """
     Plot cutflow as stacked bar chart with CMS styling using mplhep.
@@ -183,7 +183,7 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
                  framealpha=1.0, edgecolor='black')
 
         # Add CMS label using mplhep
-        hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     else:
         # Single cutflow (backward compatibility)
@@ -244,7 +244,7 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
         ax.set_axisbelow(True)
 
         # Add CMS label using mplhep
-        hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     plt.tight_layout(pad=0.5)
 
@@ -263,7 +263,7 @@ def plot_histogram(histogram: Hist,
                   logy: bool = False,
                   normalize: bool = False,
                   region_name: Optional[str] = None,
-                  lumi: float = 139.0):
+                  lumi: float = 290.0):
     """
     Plot histogram with CMS publication quality using mplhep.
 
@@ -342,7 +342,7 @@ def plot_histogram(histogram: Hist,
     ax.set_ylabel(ylabel, labelpad=10)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     # Add region label if provided (below CMS label)
     if region_name:
@@ -367,7 +367,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
                              logy: bool = True,
                              stack: bool = True,
                              region_name: Optional[str] = None,
-                             lumi: float = 139.0):
+                             lumi: float = 290.0):
     """
     Plot signal vs stacked backgrounds using mplhep for CMS styling.
     Supports overlaying multiple signal points.
@@ -544,7 +544,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
     ax.set_ylabel(r"Events", labelpad=10)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     # Add region label if provided (below CMS label)
     if region_name:
@@ -584,7 +584,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
 def plot_mass_scan(ma_values: List[float],
                   mbb_peaks: List[float],
                   output_file: Optional[str] = None,
-                  lumi: float = 139.0):
+                  lumi: float = 290.0):
     """
     Plot m(bb) peak vs ma (for resonance studies) with CMS styling.
 
@@ -611,7 +611,7 @@ def plot_mass_scan(ma_values: List[float],
     ax.set_axisbelow(True)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     plt.tight_layout(pad=0.5)
 
@@ -625,7 +625,7 @@ def plot_mass_scan(ma_values: List[float],
 def plot_efficiency_curve(ma_values: List[float],
                          efficiencies: List[float],
                          output_file: Optional[str] = None,
-                         lumi: float = 139.0):
+                         lumi: float = 290.0):
     """
     Plot efficiency curve vs ma with CMS styling.
 
@@ -650,7 +650,7 @@ def plot_efficiency_curve(ma_values: List[float],
     ax.set_ylim(0, 1.1)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     plt.tight_layout(pad=0.5)
 

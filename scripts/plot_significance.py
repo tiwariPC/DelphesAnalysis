@@ -98,7 +98,7 @@ def find_all_datacards(output_dir: Path) -> List[Tuple[Path, str]]:
     return datacards
 
 
-def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float = 139.0):
+def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float = 290.0):
     """
     Plot significance for all regions.
 
@@ -166,7 +166,7 @@ def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float
     ax.set_axisbelow(True)
 
     # Add CMS label
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year=2023)
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
 
     # Add text box with summary
     textstr = f'Total regions: {len(regions)}\n'
@@ -210,7 +210,7 @@ def main():
     parser.add_argument(
         "--lumi",
         type=float,
-        default=139.0,
+        default=290.0,
         help="Luminosity in fb^-1"
     )
     parser.add_argument(

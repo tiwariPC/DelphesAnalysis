@@ -437,8 +437,10 @@ def main():
     print("="*70)
     combined_datacard = combine_datacards(datacard_infos, output_dir=output_dir)
 
-    # Save combined datacard
-    output_file = output_dir / args.output_file
+    # Save combined datacard in plots directory (outside region dirs but inside plots)
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    output_file = plots_dir / args.output_file
     with open(output_file, 'w') as f:
         f.write(combined_datacard)
 
@@ -447,7 +449,6 @@ def main():
     print(f"  Processes: {len(set().union(*[info['processes'] for info in datacard_infos]))}")
 
     # Try to create combined shapes file
-    plots_dir = output_dir / "plots"
     shapes_files = []
     bin_names_list = []
     for datacard_file, region_name in datacards:
@@ -458,7 +459,7 @@ def main():
 
     if shapes_files:
         print(f"\n  Creating combined shapes file...")
-        combined_shapes_file = output_dir / "combined_shapes.root"
+        combined_shapes_file = plots_dir / "combined_shapes.root"
         success = combine_shapes_files(shapes_files, bin_names_list, str(combined_shapes_file))
         if success:
             print(f"  ✓ Combined shapes file saved to: {combined_shapes_file}")

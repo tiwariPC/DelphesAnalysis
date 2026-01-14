@@ -50,31 +50,70 @@ def parse_datacard(datacard_file):
     if obs_match:
         info["observation"] = int(obs_match.group(1))
 
-    # Extract process names
-    proc_match = re.search(r'^process\s+(.+)', content, re.MULTILINE)
-    if proc_match:
-        processes = proc_match.group(1).split()
+    # Extract process names (first "process" line contains names, second contains indices)
+    proc_matches = list(re.finditer(r'^process\s+(.+)', content, re.MULTILINE))
+    if proc_matches:
+        # First match is process names, second is process indices
+        processes = proc_matches[0].group(1).split()
         info["processes"] = processes
 
     # Extract rates
     rate_match = re.search(r'^rate\s+(.+)', content, re.MULTILINE)
     if rate_match:
-        rates = [float(x) for x in rate_match.group(1).split()]
-        for proc, rate in zip(info["processes"], rates):
-            info["yields"][proc] = rate
+        rate_str = rate_match.group(1).strip()
+        # Split and convert to float, handling any non-numeric values
+        rates = []
+        for x in rate_str.split():
+            try:
+                rates.append(float(x))
+            except ValueError:
+                # Skip non-numeric values (shouldn't happen in rate line, but be safe)
+                continue
+
+        # Match rates with processes
+        if len(rates) == len(info["processes"]):
+            for proc, rate in zip(info["processes"], rates):
+                info["yields"][proc] = rate
+        else:
+            # If mismatch, try to match by position
+            for i, proc in enumerate(info["processes"]):
+                if i < len(rates):
+                    info["yields"][proc] = rates[i]
 
     # Extract uncertainties
     # Format: uncertainty_name type value1 value2 ...
+    # Skip datacard header lines (imax, jmax, kmax, bin, observation, process, rate)
+    skip_keywords = {'imax', 'jmax', 'kmax', 'bin', 'observation', 'process', 'rate', 'shapes'}
     unc_pattern = r'^(\w+)\s+(\w+)\s+(.+)'
     for match in re.finditer(unc_pattern, content, re.MULTILINE):
         unc_name = match.group(1)
         unc_type = match.group(2)
-        unc_values = [float(x) for x in match.group(3).split()]
 
-        info["uncertainties"][unc_name] = {
-            "type": unc_type,
-            "values": unc_values
-        }
+        # Skip if this is a datacard header keyword
+        if unc_name.lower() in skip_keywords:
+            continue
+
+        # Parse values, handling non-numeric values gracefully
+        values_str = match.group(3).strip()
+        if not values_str:
+            continue
+
+        unc_values = []
+        for x in values_str.split():
+            # Skip non-numeric values like "-" (used in datacards for "not applicable")
+            if x == '-':
+                continue
+            try:
+                unc_values.append(float(x))
+            except ValueError:
+                # Skip values that can't be converted to float
+                continue
+
+        if unc_values:  # Only add if we have valid values
+            info["uncertainties"][unc_name] = {
+                "type": unc_type,
+                "values": unc_values
+            }
 
     return info
 
@@ -102,8 +141,14 @@ def calculate_significance(signal, background):
     z_simple = signal / np.sqrt(background)
 
     # Asimov formula (more accurate)
-    if signal > 0:
-        z_asimov = np.sqrt(2 * ((signal + background) * np.log(1 + signal/background) - signal))
+    if signal > 0 and background > 0:
+        log_arg = 1 + signal/background
+        if log_arg > 0:
+            z_asimov = np.sqrt(2 * ((signal + background) * np.log(log_arg) - signal))
+            # Ensure non-negative (handle numerical issues)
+            z_asimov = max(0.0, z_asimov) if not np.isnan(z_asimov) else 0.0
+        else:
+            z_asimov = 0.0
     else:
         z_asimov = 0.0
 
@@ -126,8 +171,14 @@ def calculate_sensitivity_for_region(datacard_file):
     """
     info = parse_datacard(datacard_file)
 
+    # Signal can be named "signal" or "sig" in datacards
     signal = info["yields"].get("signal", 0.0)
-    backgrounds = {k: v for k, v in info["yields"].items() if k != "signal"}
+    if signal == 0.0:
+        signal = info["yields"].get("sig", 0.0)
+
+    # Exclude signal from backgrounds (check both names)
+    backgrounds = {k: v for k, v in info["yields"].items()
+                   if k not in ["signal", "sig"]}
     total_bg = sum(backgrounds.values())
 
     metrics = {
@@ -184,74 +235,113 @@ def main():
         choices=["table", "csv", "json"],
         help="Output format"
     )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Output file (if not specified, prints to stdout)"
+    )
 
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
 
+    # Collect all output
+    output_lines = []
+
     # Find all datacards
-    print("="*70)
-    print("Finding Datacards")
-    print("="*70)
+    output_lines.append("="*70)
+    output_lines.append("Finding Datacards")
+    output_lines.append("="*70)
     datacards = find_all_datacards(output_dir)
 
     if not datacards:
-        print("✗ No datacards found!")
+        output_lines.append("✗ No datacards found!")
+        output_text = "\n".join(output_lines)
+        if args.output_file:
+            Path(args.output_file).parent.mkdir(parents=True, exist_ok=True)
+            with open(args.output_file, 'w') as f:
+                f.write(output_text)
+        else:
+            print(output_text)
         return
 
-    print(f"  Found {len(datacards)} datacards")
+    output_lines.append(f"  Found {len(datacards)} datacards")
 
     # Filter by region if specified
     if args.region:
         datacards = [(dc, rn) for dc, rn in datacards if rn == args.region]
         if not datacards:
-            print(f"✗ Region '{args.region}' not found!")
+            output_lines.append(f"✗ Region '{args.region}' not found!")
+            output_text = "\n".join(output_lines)
+            if args.output_file:
+                Path(args.output_file).parent.mkdir(parents=True, exist_ok=True)
+                with open(args.output_file, 'w') as f:
+                    f.write(output_text)
+            else:
+                print(output_text)
             return
 
     # Calculate sensitivity for each region
-    print("\n" + "="*70)
-    print("Calculating Sensitivity")
-    print("="*70)
+    output_lines.append("\n" + "="*70)
+    output_lines.append("Calculating Sensitivity")
+    output_lines.append("="*70)
 
     all_metrics = {}
     for datacard_file, region_name in datacards:
-        print(f"\n  Region: {region_name}")
+        output_lines.append(f"\n  Region: {region_name}")
         try:
             metrics = calculate_sensitivity_for_region(datacard_file)
             all_metrics[region_name] = metrics
 
-            print(f"    Signal: {metrics['signal']:.4f} events")
-            print(f"    Background: {metrics['total_background']:.4f} events")
-            print(f"    S/B: {metrics['s_over_b']:.4f}")
-            print(f"    Significance (Z): {metrics['significance']:.4f}")
+            output_lines.append(f"    Signal: {metrics['signal']:.4f} events")
+            output_lines.append(f"    Background: {metrics['total_background']:.4f} events")
+            output_lines.append(f"    S/B: {metrics['s_over_b']:.4f}")
+            output_lines.append(f"    Significance (Z): {metrics['significance']:.4f}")
         except Exception as e:
-            print(f"    ✗ Error: {e}")
+            output_lines.append(f"    ✗ Error: {e}")
 
     # Summary table
-    print("\n" + "="*70)
-    print("Summary")
-    print("="*70)
+    output_lines.append("\n" + "="*70)
+    output_lines.append("Summary")
+    output_lines.append("="*70)
 
     if args.format == "table":
-        print(f"\n{'Region':<20} {'Signal':>12} {'Background':>12} {'S/B':>10} {'Z':>10}")
-        print("-" * 70)
+        output_lines.append(f"\n{'Region':<20} {'Signal':>12} {'Background':>12} {'S/B':>10} {'Z':>10}")
+        output_lines.append("-" * 70)
         for region_name, metrics in sorted(all_metrics.items()):
-            print(f"{region_name:<20} {metrics['signal']:>12.4f} "
+            output_lines.append(f"{region_name:<20} {metrics['signal']:>12.4f} "
                   f"{metrics['total_background']:>12.4f} "
                   f"{metrics['s_over_b']:>10.4f} "
                   f"{metrics['significance']:>10.4f}")
 
     elif args.format == "csv":
-        print("Region,Signal,Background,S/B,Significance")
+        output_lines.append("Region,Signal,Background,S/B,Significance")
         for region_name, metrics in sorted(all_metrics.items()):
-            print(f"{region_name},{metrics['signal']:.4f},"
+            output_lines.append(f"{region_name},{metrics['signal']:.4f},"
                   f"{metrics['total_background']:.4f},"
                   f"{metrics['s_over_b']:.4f},"
                   f"{metrics['significance']:.4f}")
 
-    print("\n" + "="*70)
-    print("✓ Complete!")
-    print("="*70)
+    elif args.format == "json":
+        import json
+        output_lines.append(json.dumps(all_metrics, indent=2))
+
+    output_lines.append("\n" + "="*70)
+    output_lines.append("✓ Complete!")
+    output_lines.append("="*70)
+
+    # Write output
+    output_text = "\n".join(output_lines)
+
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w') as f:
+            f.write(output_text)
+        print(f"\n✓ Output saved to {args.output_file}")
+    else:
+        print(output_text)
 
 
 if __name__ == "__main__":
