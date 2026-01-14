@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -e
+set -x
+
+MODE=$1   # signal or background
+
+if [ -z "$MODE" ]; then
+    echo "Usage: ./run_jobs.sh <signal|background>"
+    exit 1
+fi
+
+if [ "$MODE" != "signal" ] && [ "$MODE" != "background" ]; then
+    echo "ERROR: MODE must be one of: signal  background"
+    exit 1
+fi
+
+rm -rf logs/*
+mkdir -p logs/output logs/error
+
+echo "Submitting $MODE jobs..."
+
+if [ "$MODE" == "signal" ]; then
+    condor_submit signal.submit
+else
+    condor_submit background.submit
+fi

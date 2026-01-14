@@ -1,0 +1,7 @@
+import model Pseudoscalar_2HDMI-bbMET_5FS
+
+define p = g u c d s u~ c~ d~ s~ b b~
+define j = p
+
+generate p p > b b~ xd xd~
+output bbdm_2hdma_type1_case1 -nojpeg 

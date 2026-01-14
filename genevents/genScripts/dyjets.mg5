@@ -1,0 +1,5 @@
+import model sm
+
+generate p p > z j j, z > l+ l-
+
+output dyjets -nojpeg

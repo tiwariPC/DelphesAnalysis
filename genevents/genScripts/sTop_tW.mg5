@@ -1,0 +1,9 @@
+import model sm
+
+define p = g u c d s u~ c~ d~ s~ b b~
+define j = p
+
+generate p p > t w-
+add process p p > t~ w+
+
+output sTop_tW

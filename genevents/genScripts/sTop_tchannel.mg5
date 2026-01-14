@@ -1,0 +1,10 @@
+# Start MadGraph and load the Standard Model
+import model sm
+
+define p = g u c d s u~ c~ d~ s~ b b~
+define j = p
+
+generate p p > t j
+add process p p > t~ j
+
+output sTop_tchannel

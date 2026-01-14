@@ -1,0 +1,9 @@
+launch
+shower=Pythia8
+detector=Delphes
+analysis=OFF
+set run_card nevents 10000
+set run_card ebeam1 6800
+set run_card ebeam2 6800
+set run_card iseed __ISEED__
+done

@@ -1,0 +1,27 @@
+universe              = vanilla
+Proxy_filename = x509up_u98885
+Proxy_path = /afs/cern.ch/user/p/ptiwari/private/$(Proxy_filename)
+
+executable            = run_signal.sh
+arguments             = $(ProcId) $(MCA) $(MSA) $(ISEED) $(Proxy_path)
+
+output                = logs/output/mA$(MCA)ma$(MSA)seed$(ISEED).$(ClusterId).$(ProcId).out
+error                 = logs/error/mA$(MCA)ma$(MSA)seed$(ISEED).$(ClusterId).$(ProcId).err
+log                   = logs/mA$(MCA)ma$(MSA)seed$(ISEED).$(ClusterId).log
+
+should_transfer_files = YES
+# when_to_transfer_output = ON_EXIT
+
+transfer_input_files = /afs/cern.ch/work/p/ptiwari/madgraph/MG5_aMC_v3_5_12/bbdm_2hdma_type1_case1.tar.gz,signal.madevent,dumb.file
+transfer_output_files = dumb.file
+
+
+on_exit_hold          = (ExitBySignal == True) || (ExitCode != 0)
+periodic_release      = (NumJobStarts < 3) && ((CurrentTime - EnteredCurrentStatus) > 600)
+
+request_memory        = 12000
+request_cpus          = 6
++JobFlavour           = "tomorrow"
+
+# Queue jobs for multiple ma and mA
+queue MCA,MSA,ISEED from signal.joblist

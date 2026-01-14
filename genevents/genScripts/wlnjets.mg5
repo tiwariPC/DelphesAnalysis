@@ -1,0 +1,7 @@
+import model sm
+
+# Define the W + jets Background
+generate p p > w+ j j, w+ > l+ vl
+add process p p > w- j j, w- > l- vl~
+
+output wlnjets

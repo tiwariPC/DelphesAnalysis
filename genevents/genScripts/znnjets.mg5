@@ -1,0 +1,6 @@
+import model sm
+
+# Define the Irreducible Z Background
+generate p p > z j j, z > vl vl~
+
+output znnjets -nojpeg

@@ -1,0 +1,8 @@
+multi_run 10
+shower=Pythia8
+detector=Delphes
+analysis=OFF
+set nevents 10000
+set ebeam1 6800
+set ebeam2 6800
+done
