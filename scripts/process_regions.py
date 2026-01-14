@@ -29,8 +29,7 @@ from src.bbdmDelphes import (
     calculate_mll,
     calculate_observables,
     generate_datacard,
-    save_datacard,
-    create_shapes_file
+    save_datacard
 )
 from src.regions import load_regions, get_region_type, get_region_category
 from src.plotting_utils import plot_cutflow, plot_histogram, plot_signal_vs_background
@@ -738,6 +737,8 @@ def main():
     output_dir.mkdir(exist_ok=True)
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
+    datacards_dir = output_dir / "datacards"  # New directory for datacards
+    datacards_dir.mkdir(exist_ok=True)
 
     regions_config = load_regions(args.cuts_config)
     background_files, _ = load_samples_config(args.samples_config)  # Only load file paths
@@ -910,10 +911,16 @@ def main():
 
         # Collect histograms for each observable - overlay all signals
         signal_hists = {}  # Dictionary of {label: {obs_name: hist}}
+        signal_yields_dict = {}  # Dictionary of {label: yield} for SRs only
         for i, signal_outputs in enumerate(all_signal_outputs):
             if region_name in signal_outputs:
                 sig_label = signal_info_list[i][0]
+                sig_xs = signal_info_list[i][1]
+                sig_ngen = signal_info_list[i][2]
                 signal_hists[sig_label] = signal_outputs[region_name]["histograms"]
+                # Calculate yield for SRs to determine top signals
+                if region_type == "SR":
+                    signal_yields_dict[sig_label] = signal_outputs[region_name]["n_selected"] * (sig_xs * args.lumi * 1000.0) / sig_ngen
 
         bg_hists = {}
         for bg_name in background_outputs:
@@ -954,12 +961,26 @@ def main():
             # Collect all signal histograms for this observable
             signal_hists_obs = {}
             if region_type == "SR":
-                for sig_label, sig_hists in signal_hists.items():
-                    if obs_name in sig_hists:
-                        sig_hist_obs = sig_hists[obs_name]
-                        signal_values = sig_hist_obs.values()
-                        if len(signal_values) > 0 and np.sum(signal_values) > 0:
-                            signal_hists_obs[sig_label] = sig_hist_obs
+                # For SRs, only overlay top 3 signals by yield
+                if signal_yields_dict:
+                    # Sort signals by yield (descending) and take top 3
+                    sorted_signals = sorted(signal_yields_dict.items(), key=lambda x: x[1], reverse=True)[:3]
+                    top_signal_labels = [label for label, _ in sorted_signals]
+                    for sig_label in top_signal_labels:
+                        if sig_label in signal_hists and obs_name in signal_hists[sig_label]:
+                            sig_hist_obs = signal_hists[sig_label][obs_name]
+                            signal_values = sig_hist_obs.values()
+                            if len(signal_values) > 0 and np.sum(signal_values) > 0:
+                                signal_hists_obs[sig_label] = sig_hist_obs
+                else:
+                    # Fallback: use all signals if yields not available
+                    for sig_label, sig_hists in signal_hists.items():
+                        if obs_name in sig_hists:
+                            sig_hist_obs = sig_hists[obs_name]
+                            signal_values = sig_hist_obs.values()
+                            if len(signal_values) > 0 and np.sum(signal_values) > 0:
+                                signal_hists_obs[sig_label] = sig_hist_obs
+            # Note: For CRs, we don't overlay signals (existing behavior)
 
             # Scale signal histograms for plotting only (if scale factor != 1.0)
             signal_hists_obs_scaled = {}
@@ -1041,7 +1062,7 @@ def main():
             else:
                 main_observable = "cost_star" if region_category == "2b" else "recoil"
 
-            # Generate datacard and shapes file for each signal point
+            # Generate datacard for each signal point
             for i, signal_outputs in enumerate(all_signal_outputs):
                 if region_name in signal_outputs:
                     sig_label, sig_xs, sig_ngen, sig_mA, sig_ma = signal_info_list[i]
@@ -1050,7 +1071,6 @@ def main():
                     # Use stored mA and ma values for filename
                     if sig_mA is not None and sig_ma is not None:
                         datacard_filename = f"datacard_mA{sig_mA}_ma{sig_ma}.txt"
-                        shapes_filename = f"shapes_mA{sig_mA}_ma{sig_ma}.root"
                     else:
                         # Fallback: try to extract from label, then use index
                         sig_match = re.search(r'mA(\d+).*ma(\d+)', sig_label, re.IGNORECASE)
@@ -1058,11 +1078,12 @@ def main():
                             sig_mA = sig_match.group(1)
                             sig_ma = sig_match.group(2)
                             datacard_filename = f"datacard_mA{sig_mA}_ma{sig_ma}.txt"
-                            shapes_filename = f"shapes_mA{sig_mA}_ma{sig_ma}.root"
                         else:
                             # Last resort: use index
                             datacard_filename = f"datacard_sig{i}.txt"
-                            shapes_filename = f"shapes_sig{i}.root"
+
+                    # Use the same directory name format as region_dir
+                    region_dir_name = region_dir.name
 
                     datacard = generate_datacard(
                         signal_name="sig",
@@ -1072,20 +1093,12 @@ def main():
                         bin_name=bin_name,
                         dominant_bkg=dominant_bkg,
                         observation=-1,
-                        shapes_file=shapes_filename
+                        shapes_file=""  # No shapes files
                     )
-                    save_datacard(datacard, str(region_dir / datacard_filename))
-
-                    # Create shapes file for this signal
-                    signal_hist = signal_hists[sig_label] if sig_label in signal_hists else None
-                    shapes_file = region_dir / shapes_filename
-                    success = create_shapes_file(
-                        signal_hist=signal_hist,
-                        background_hists=bg_hists,
-                        bin_name=bin_name,
-                        output_file=str(shapes_file),
-                        main_observable=main_observable
-                    )
+                    # Save datacard to datacards directory instead of plots directory
+                    region_datacards_dir = datacards_dir / region_dir_name
+                    region_datacards_dir.mkdir(parents=True, exist_ok=True)
+                    save_datacard(datacard, str(region_datacards_dir / datacard_filename))
 
     # Create combined datacard for each signal point
     print("\n" + "="*70)
@@ -1093,15 +1106,15 @@ def main():
     print("="*70)
     try:
         from scripts.create_combined_datacard import parse_datacard, combine_datacards
-        from src.bbdmDelphes import combine_shapes_files
 
         plots_dir = output_dir / "plots"
+        datacards_dir = output_dir / "datacards"  # Use datacards directory
 
         # Group datacards by signal point
         signal_datacards = {}  # {signal_key: [(datacard_file, region_name), ...]}
 
-        # Find all datacard files in region directories
-        for region_dir in plots_dir.iterdir():
+        # Find all datacard files in datacards directory (not plots directory)
+        for region_dir in datacards_dir.iterdir():
             if region_dir.is_dir():
                 # Look for datacard files with signal identifiers
                 for datacard_file in region_dir.glob("datacard_*.txt"):
@@ -1144,43 +1157,14 @@ def main():
                     # Combine datacards for this signal
                     combined_datacard = combine_datacards(datacard_infos, output_dir=output_dir)
 
-                    # Save combined datacard in plots directory
-                    combined_datacard_file = plots_dir / f"combined_datacard_{sig_key}.txt"
+                    # Save combined datacard in datacards directory (not plots)
+                    combined_datacard_file = datacards_dir / f"combined_datacard_{sig_key}.txt"
                     with open(combined_datacard_file, 'w') as f:
                         f.write(combined_datacard)
 
                     print(f"\n    ✓ Combined datacard saved to: {combined_datacard_file}")
                     print(f"      Bins: {len(datacard_infos)}")
                     print(f"      Processes: {len(set().union(*[info['processes'] for info in datacard_infos]))}")
-
-                    # Try to create combined shapes file for this signal
-                    shapes_files = []
-                    bin_names_list = []
-                    datacard_to_info = {}
-                    for i, (dc_file, rn) in enumerate(datacards):
-                        if i < len(datacard_infos):
-                            datacard_to_info[dc_file] = datacard_infos[i]
-
-                    for datacard_file, region_name in datacards:
-                        # Find corresponding shapes file
-                        shapes_file = None
-                        # Try to match shapes filename with datacard filename
-                        shapes_pattern = datacard_file.name.replace("datacard_", "shapes_").replace(".txt", ".root")
-                        shapes_file = datacard_file.parent / shapes_pattern
-
-                        if shapes_file.exists() and datacard_file in datacard_to_info:
-                            bin_name = datacard_to_info[datacard_file].get("bin_name")
-                            if bin_name:
-                                shapes_files.append(str(shapes_file))
-                                bin_names_list.append(bin_name)
-
-                    if shapes_files and len(shapes_files) == len(bin_names_list):
-                        combined_shapes_file = plots_dir / f"combined_shapes_{sig_key}.root"
-                        success = combine_shapes_files(shapes_files, bin_names_list, str(combined_shapes_file))
-                        if success:
-                            print(f"    ✓ Combined shapes file saved to: {combined_shapes_file}")
-                        else:
-                            print(f"    ⚠ Could not create combined shapes file")
     except Exception as e:
         print(f"  ⚠ Warning: Could not create combined datacards: {e}")
         import traceback

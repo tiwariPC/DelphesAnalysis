@@ -208,7 +208,7 @@ def build_process_regions_command(
     Returns:
         List of command arguments
     """
-    cmd = ["python", "scripts/process_regions.py"]
+    cmd = [sys.executable, "scripts/process_regions.py"]
 
     # Add all signal files
     signals_to_add = []

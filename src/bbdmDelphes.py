@@ -1073,9 +1073,10 @@ def generate_datacard(signal_name, signal_rate,
     lines.append(f"kmax *")
     lines.append("---------------------------------")
 
-    # Shapes line
-    lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
-    lines.append("---------------------------------")
+    # Shapes line (only if shapes_file is provided)
+    if shapes_file:
+        lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
+        lines.append("---------------------------------")
 
     # Bin and observation
     lines.append(f"bin           {bin_name}")

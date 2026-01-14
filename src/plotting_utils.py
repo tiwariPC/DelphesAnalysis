@@ -13,6 +13,7 @@ import mplhep as hep
 from hist import Hist
 from typing import Dict, List, Optional, Tuple
 from math import log10, floor
+from pathlib import Path
 
 # Enable LaTeX rendering for matplotlib
 # Set LaTeX rendering - matplotlib will fall back to mathtext if LaTeX is unavailable
@@ -249,9 +250,21 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
     plt.tight_layout(pad=0.5)
 
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        # Save both PDF and PNG formats
+        output_path = Path(output_file)
+        base_path = output_path.parent / output_path.stem
+
+        # Save PDF
+        pdf_file = str(base_path.with_suffix('.pdf'))
+        plt.savefig(pdf_file, dpi=300, bbox_inches='tight')
+        print(f"Saved cutflow plot to {pdf_file}")
+
+        # Save PNG
+        png_file = str(base_path.with_suffix('.png'))
+        plt.savefig(png_file, dpi=300, bbox_inches='tight')
+        print(f"Saved cutflow plot to {png_file}")
+
         plt.close()
-        print(f"Saved cutflow plot to {output_file}")
     # In batch mode, we don't show plots
 
 
@@ -575,9 +588,21 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
     plt.tight_layout(pad=0.5)
 
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        # Save both PDF and PNG formats
+        output_path = Path(output_file)
+        base_path = output_path.parent / output_path.stem
+
+        # Save PDF
+        pdf_file = str(base_path.with_suffix('.pdf'))
+        plt.savefig(pdf_file, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Saved plot to {pdf_file}")
+
+        # Save PNG
+        png_file = str(base_path.with_suffix('.png'))
+        plt.savefig(png_file, dpi=300, bbox_inches='tight')
+        print(f"  ✓ Saved plot to {png_file}")
+
         plt.close()
-        print(f"  ✓ Saved plot to {output_file}")
     # In batch mode, we don't show plots
 
 
