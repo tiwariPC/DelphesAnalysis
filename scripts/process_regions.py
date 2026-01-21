@@ -730,6 +730,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument("--cuts-config", type=str, default="config/cuts_config.yaml", help="Cuts configuration file")
     parser.add_argument("--signal-scale", type=float, default=1.0, help="Scale factor for signal histograms in plots only (default: 1.0, no scaling)")
+    parser.add_argument("--signal-xs-unit", action='store_true', help="Set all signal cross-sections to 1.0 pb (overrides other cross-section settings)")
 
     args = parser.parse_args()
 
@@ -789,7 +790,11 @@ def main():
         signal_files, signal_xs_list, signal_mA_list, signal_ma_list, signal_ngen_list, signal_labels
     )):
         # Determine cross-section
-        if sig_xs is None:
+        if args.signal_xs_unit:
+            # Override with unit cross-section
+            sig_xs = 1.0
+            print(f"  ✓ Signal {i+1}: Using unit cross-section (xs=1.0 pb) [--signal-xs-unit]")
+        elif sig_xs is None:
             if sig_mA is not None and sig_ma is not None:
                 signal_key = (sig_mA, sig_ma)
                 if signal_key in signal_xs_dict:
@@ -801,6 +806,9 @@ def main():
             else:
                 print(f"  ✗ Error: Signal {i+1}: Must provide either --signal-xs or both --signal-mA and --signal-ma")
                 continue
+        else:
+            # sig_xs was provided via --signal-xs, use it
+            print(f"  ✓ Signal {i+1}: Using provided cross-section: xs={sig_xs:.10f} pb")
 
         # Generate label if not provided
         if sig_label is None:

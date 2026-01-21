@@ -200,7 +200,8 @@ def build_process_regions_command(
     background_xsec_file: str = "config/background_cross_sections.yaml",
     cuts_config: str = "config/cuts_config.yaml",
     auto_ngen: bool = True,
-    signal_scale: float = 1.0
+    signal_scale: float = 1.0,
+    signal_xs_unit: bool = False
 ) -> List[str]:
     """
     Build the command to run process_regions.py with discovered files.
@@ -245,6 +246,10 @@ def build_process_regions_command(
 
     if signal_scale != 1.0:
         cmd.extend(["--signal-scale", str(signal_scale)])
+
+    if signal_xs_unit:
+        cmd.append("--signal-xs-unit")
+
     cmd.extend(["--output-dir", output_dir])
     cmd.extend(["--signal-xsec", signal_xsec_file])
     cmd.extend(["--background-xsec", background_xsec_file])
@@ -320,6 +325,8 @@ def main():
                        help="Don't automatically count events from ROOT files")
     parser.add_argument("--signal-scale", type=float, default=1.0,
                        help="Scale factor for signal histograms in plots only (default: 1.0, no scaling)")
+    parser.add_argument("--signal-xs-unit", action='store_true',
+                       help="Set all signal cross-sections to 1.0 pb (overrides other cross-section settings)")
 
     args = parser.parse_args()
 
@@ -366,7 +373,8 @@ def main():
         background_xsec_file=args.background_xsec,
         cuts_config=args.cuts_config,
         auto_ngen=not args.no_auto_ngen,
-        signal_scale=args.signal_scale
+        signal_scale=args.signal_scale,
+        signal_xs_unit=args.signal_xs_unit
     )
 
     # Check if we have any signals
