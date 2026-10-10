@@ -1075,8 +1075,8 @@ def generate_datacard(signal_name, signal_rate,
 
     # Shapes line (only if shapes_file is provided)
     if shapes_file:
-        lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
-        lines.append("---------------------------------")
+    lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
+    lines.append("---------------------------------")
 
     # Bin and observation
     lines.append(f"bin           {bin_name}")

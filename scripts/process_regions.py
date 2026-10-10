@@ -825,16 +825,16 @@ def main():
             print(f"  ✗ Failed to load signal {i+1}: {sig_file}")
             continue
 
-        signal_outputs = {}
-        for region_name in regions_config.keys():
-            output = process_sample_for_region(
+    signal_outputs = {}
+    for region_name in regions_config.keys():
+        output = process_sample_for_region(
                 sig_label, signal_data["events"], signal_data["jets"], signal_data["bjets"],
-                signal_data["met"], signal_data["electrons"], signal_data["muons"],
+            signal_data["met"], signal_data["electrons"], signal_data["muons"],
                 signal_data["additional_vars"], sig_xs, sig_ngen,
-                region_name, regions_config, args.lumi, output_dir, args.cuts_config
-            )
-            if output:
-                signal_outputs[region_name] = output
+            region_name, regions_config, args.lumi, output_dir, args.cuts_config
+        )
+        if output:
+            signal_outputs[region_name] = output
 
         all_signal_outputs.append(signal_outputs)
 
@@ -921,7 +921,7 @@ def main():
         signal_hists = {}  # Dictionary of {label: {obs_name: hist}}
         signal_yields_dict = {}  # Dictionary of {label: yield} for SRs only
         for i, signal_outputs in enumerate(all_signal_outputs):
-            if region_name in signal_outputs:
+        if region_name in signal_outputs:
                 sig_label = signal_info_list[i][0]
                 sig_xs = signal_info_list[i][1]
                 sig_ngen = signal_info_list[i][2]
@@ -1093,14 +1093,14 @@ def main():
                     # Use the same directory name format as region_dir
                     region_dir_name = region_dir.name
 
-                    datacard = generate_datacard(
-                        signal_name="sig",
-                        signal_rate=signal_yield,
-                        backgrounds=bg_rates,
-                        region_type=region_type,
-                        bin_name=bin_name,
-                        dominant_bkg=dominant_bkg,
-                        observation=-1,
+            datacard = generate_datacard(
+                signal_name="sig",
+                signal_rate=signal_yield,
+                backgrounds=bg_rates,
+                region_type=region_type,
+                bin_name=bin_name,
+                dominant_bkg=dominant_bkg,
+                observation=-1,
                         shapes_file=""  # No shapes files
                     )
                     # Save datacard to datacards directory instead of plots directory
@@ -1130,7 +1130,7 @@ def main():
                     match = re.search(r'datacard_mA(\d+)_ma(\d+)\.txt', datacard_file.name)
                     if match:
                         sig_key = f"mA{match.group(1)}_ma{match.group(2)}"
-                    else:
+            else:
                         # Fallback: try to extract from other patterns
                         match = re.search(r'datacard_sig(\d+)\.txt', datacard_file.name)
                         if match:

@@ -104,3 +104,9 @@ dumb.file
 genevents/condorJob/*.out
 genevents/condorJob/*.err
 genevents/condorJob/logs/
+
+# Self-contained generation (genevents/mg5_Generate_Run_bbMET.py)
+genevents/MG5_aMC_v*/
+genevents/work/
+genevents/DelphesSignal/
+genevents/DelphesBackground/
