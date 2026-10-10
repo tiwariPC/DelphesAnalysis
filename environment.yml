@@ -1,0 +1,27 @@
+# Conda environment for the whole pipeline (generation + analysis).
+# Created by setup.sh; or manually: conda env create -f environment.yml
+name: delphesanalysis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11      # MadGraph's model reader needs <= 3.12
+  - pip
+  # compilers (MadGraph cannot be installed with pip)
+  - gfortran         # MadGraph matrix elements
+  - gxx              # Pythia8 / Delphes builds
+  - make
+  # core analysis framework
+  - coffea>=2025.12.0
+  - awkward>=2.8.11
+  - numpy>=2.3.5
+  # histogramming
+  - hist>=2.9.0
+  # ROOT file I/O
+  - uproot>=5.6.9
+  # plotting
+  - matplotlib>=3.10.8
+  - seaborn>=0.13.2
+  # configuration (YAML files)
+  - pyyaml>=6.0.3
+  # optional: for advanced features
+  # - scipy>=1.10.0  # statistical functions

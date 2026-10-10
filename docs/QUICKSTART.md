@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+conda env create -f environment.yml && conda activate delphesanalysis
 ```
 
 ## Running Your First Analysis
@@ -142,7 +142,7 @@ save_datacard(datacard, "datacard.txt")
 - Modify `load_delphes_events("file.root", tree_name="YourTreeName")`
 
 ### Import errors
-- Make sure all dependencies are installed: `pip install -r requirements.txt`
+- Make sure all dependencies are installed: `source setup.sh` (uses environment.yml)
 - Check Python version (requires Python 3.8+)
 
 ### Empty histograms

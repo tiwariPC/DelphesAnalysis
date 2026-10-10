@@ -5,10 +5,9 @@
 #   ./setup.sh             # creates env if needed, only checks it (cannot activate your shell)
 #
 # Env name: delphesanalysis (override: ENV_NAME=foo source setup.sh)
-# Python 3.11: inside the range MadGraph's model reader tolerates (<= 3.12).
+# Packages come from environment.yml (python 3.11, compilers, analysis libraries).
 
 ENV_NAME="${ENV_NAME:-delphesanalysis}"
-PY_VERSION="${PY_VERSION:-3.11}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 _setup_fail() { echo "[setup] ERROR: $*" >&2; return 1 2>/dev/null || exit 1; }
@@ -21,17 +20,17 @@ eval "$(conda shell.bash hook)"
 if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
     echo "[setup] env '$ENV_NAME' exists"
 else
-    echo "[setup] creating env '$ENV_NAME' (python $PY_VERSION)"
-    conda create -y -n "$ENV_NAME" -c conda-forge "python=$PY_VERSION" pip || _setup_fail "conda create failed" || return 1 2>/dev/null || exit 1
+    echo "[setup] creating env '$ENV_NAME' from environment.yml (python, compilers, analysis libraries)"
+    (cd "$REPO_DIR" && conda env create -y -n "$ENV_NAME" -f environment.yml) || _setup_fail "conda env create failed" || return 1 2>/dev/null || exit 1
 fi
 
 conda activate "$ENV_NAME" || _setup_fail "cannot activate '$ENV_NAME'" || return 1 2>/dev/null || exit 1
 echo "[setup] active env: $CONDA_DEFAULT_ENV ($(python --version 2>&1))"
 
-# Python requirements (pip skips what is already satisfied).
+# Packages of an already existing env: bring them in line with environment.yml.
 if ! python -c "import coffea, hist, awkward, uproot, yaml, matplotlib, seaborn, numpy" >/dev/null 2>&1; then
-    echo "[setup] installing requirements.txt"
-    python -m pip install -r "$REPO_DIR/requirements.txt" || _setup_fail "pip install failed" || return 1 2>/dev/null || exit 1
+    echo "[setup] updating env from environment.yml"
+    conda env update -n "$ENV_NAME" -f "$REPO_DIR/environment.yml" || _setup_fail "conda env update failed" || return 1 2>/dev/null || exit 1
 fi
 
 # ROOT: required by MadGraph's 'install Delphes'. Reuse any root-config on PATH
@@ -41,9 +40,28 @@ if ! command -v root-config >/dev/null 2>&1; then
     conda install -y -n "$ENV_NAME" -c conda-forge root || echo "[setup] WARNING: ROOT install failed; MadGraph Delphes install will fail"
 fi
 
-# Compilers MadGraph needs.
+# Compilers MadGraph needs (Fortran for matrix elements, C++ for Pythia8/Delphes).
+# Missing ones are installed into the env from conda-forge.
+_pkgs=""
+command -v gfortran >/dev/null 2>&1 || _pkgs="$_pkgs gfortran"
+command -v g++      >/dev/null 2>&1 || _pkgs="$_pkgs gxx"
+command -v make     >/dev/null 2>&1 || _pkgs="$_pkgs make"
+if [ -n "$_pkgs" ]; then
+    echo "[setup] installing compilers:$_pkgs"
+    # shellcheck disable=SC2086
+    conda install -y -n "$ENV_NAME" -c conda-forge $_pkgs || echo "[setup] WARNING: compiler install failed"
+    # Re-activate so conda's compiler activation scripts run, then make sure the
+    # plain names MadGraph searches for exist (conda ships <triplet>-gfortran / -g++).
+    conda deactivate; conda activate "$ENV_NAME"
+    if ! command -v gfortran >/dev/null 2>&1 && [ -n "${FC:-}" ] && [ -x "$(command -v "$FC")" ]; then
+        ln -sf "$(command -v "$FC")" "$CONDA_PREFIX/bin/gfortran"
+    fi
+    if ! command -v g++ >/dev/null 2>&1 && [ -n "${CXX:-}" ] && [ -x "$(command -v "$CXX")" ]; then
+        ln -sf "$(command -v "$CXX")" "$CONDA_PREFIX/bin/g++"
+    fi
+fi
 for tool in gfortran g++ make; do
-    command -v "$tool" >/dev/null 2>&1 || echo "[setup] WARNING: '$tool' not found in PATH (needed by MadGraph)"
+    command -v "$tool" >/dev/null 2>&1 || echo "[setup] WARNING: '$tool' still not found in PATH (needed by MadGraph)"
 done
 
 echo "[setup] python : $(command -v python)"

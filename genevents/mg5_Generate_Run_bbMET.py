@@ -266,6 +266,10 @@ def check_environment():
     if ver > MAX_PYTHON:
         sys.exit(f"Error: {MG5_PYTHON} is Python {ver[0]}.{ver[1]}; MadGraph's model reader needs <= 3.12 "
                  f"(PEP 667). Set MG5_PYTHON to such an interpreter.")
+    missing = [t for t in ("gfortran", "g++", "make") if shutil.which(t) is None]
+    if missing:
+        sys.exit(f"Error: {', '.join(missing)} not found in PATH; MadGraph cannot build processes.\n"
+                 f"Run 'source setup.sh' (installs them into the conda env), or install them system-wide.")
     print(f"[env] MadGraph : {MG5_EXE}", flush=True)
     print(f"[env] Python   : {MG5_PYTHON} ({ver[0]}.{ver[1]})", flush=True)
 

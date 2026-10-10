@@ -16,7 +16,7 @@ Complete end-to-end bbMET analysis pipeline for 2HDM+a model, starting from Delp
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+source setup.sh   # creates/activates the conda env from environment.yml
 ```
 
 **Verify installation:**
@@ -138,7 +138,7 @@ DephesAnalysis/
 ├── run_analysis.py          # Command-line script (easiest way to run)
 ├── process_backgrounds.py   # Process all backgrounds with stacked plots
 ├── cuts_config.yaml         # YAML configuration for selection cuts
-├── requirements.txt         # Python dependencies
+├── environment.yml          # conda environment (python, compilers, libraries)
 └── README.md                # This file
 ```
 
@@ -174,7 +174,7 @@ See `CUTS_CONFIG_GUIDE.md` for detailed documentation.
 ### Step 1: Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+source setup.sh   # creates/activates the conda env from environment.yml
 ```
 
 ### Step 2: Run Your First Analysis

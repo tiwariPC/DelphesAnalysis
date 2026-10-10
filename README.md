@@ -266,7 +266,7 @@ output/
 
 ## Requirements
 
-See `requirements.txt` for Python dependencies.
+See `environment.yml` for dependencies (`source setup.sh` creates the conda env).
 
 ## Documentation
 
