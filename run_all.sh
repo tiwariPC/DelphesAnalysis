@@ -51,7 +51,11 @@ step() { echo; echo "=================== $* ==================="; }
 
 step "1/6 setup environment"
 # shellcheck disable=SC1091
+# conda's (de)activate hooks (e.g. deactivate-root.sh) read unset variables, so
+# nounset must be off while they run.
+set +u
 source "$REPO_DIR/setup.sh"
+set -u
 
 if [ "$SKIP_GEN" -eq 0 ]; then
     step "2/6 generate signal ($SIGNAL_MODEL, $MODE)"
