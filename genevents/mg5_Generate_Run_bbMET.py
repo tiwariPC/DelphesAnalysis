@@ -52,7 +52,6 @@ CARD_DIR = os.path.join(WORK_DIR, "textFiles")
 LOG_DIR = os.path.join(WORK_DIR, "logFiles")
 
 # ------------------------------------------------------------------ physics config
-EBEAM = 6800
 
 # t-channel scan (same as tChannelDM-mg5EventGeneration)
 T_MED_VALS = [10, 50, 100, 200, 500, 750, 1000, 1500, 2000, 2500]
@@ -78,7 +77,7 @@ TCHANNEL_PROCS = {
 HDMA_PROC = dict(mg5="twoHDMa-typeII.mg5", madevent="twoHDMa-typeII.madevent")
 
 # Backgrounds: each one is genScripts/<name>.mg5 (process) launched with the shared
-# background settings below.
+# settings card genScripts/background.madevent.
 BACKGROUNDS = ["dyjets", "ttbar", "diboson", "sTop_tchannel", "sTop_tW", "wlnjets", "znnjets"]
 
 # ------------------------------------------------------------------ MadGraph install
@@ -326,7 +325,7 @@ def launch_header(run_name, process_dir, dir_exists):
     """Launch block; the card path line makes MG5 copy it into Cards/."""
     launch = f"launch {process_dir} --name={run_name}\n" if dir_exists else f"launch --name={run_name}\n"
     card = f"{DELPHES_CARD}\n" if DELPHES_CARD else ""
-    return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=OFF\n" + card
+    return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=ExRoot\n" + card
 
 
 def render_template(name, values):
@@ -356,17 +355,16 @@ def load_process_card(name, values):
 
 def tchannel_settings(dm, mMED, mDM, lam, nevents, seed):
     return render_template(TCHANNEL_PROCS[dm]["madevent"], dict(
-        EBEAM=EBEAM, NEVENTS=nevents, ISEED=seed, MMED=mMED, MDM=mDM, LAM=lam))
+        NEVENTS=nevents, ISEED=seed, MMED=mMED, MDM=mDM, LAM=lam))
 
 
 def hdma_settings(mA, ma, nevents, seed):
     return render_template(HDMA_PROC["madevent"], dict(
-        EBEAM=EBEAM, NEVENTS=nevents, ISEED=seed, MCA=mA, MSA=ma))
+        NEVENTS=nevents, ISEED=seed, MCA=mA, MSA=ma))
 
 
 def background_settings(nevents, seed):
-    return (f"set run_card ebeam1 {EBEAM}\nset run_card ebeam2 {EBEAM}\n"
-            f"set run_card nevents {nevents}\nset run_card iseed {seed}\ndone\n")
+    return render_template("background.madevent", dict(NEVENTS=nevents, ISEED=seed))
 
 
 def reset_param_card(process_dir):

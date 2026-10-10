@@ -1,5 +1,5 @@
-set run_card ebeam1 __EBEAM__
-set run_card ebeam2 __EBEAM__
+set run_card ebeam1 6800
+set run_card ebeam2 6800
 set run_card nevents __NEVENTS__
 set run_card iseed __ISEED__
 set param_card DECAY 2000005 Auto

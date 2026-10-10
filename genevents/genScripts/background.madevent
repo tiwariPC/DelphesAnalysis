@@ -1,8 +1,5 @@
-multi_run 10
-shower=Pythia8
-detector=Delphes
-analysis=OFF
-set nevents 10000
-set ebeam1 6800
-set ebeam2 6800
+set run_card ebeam1 6800
+set run_card ebeam2 6800
+set run_card nevents __NEVENTS__
+set run_card iseed __ISEED__
 done
