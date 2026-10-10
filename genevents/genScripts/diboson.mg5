@@ -6,4 +6,4 @@ add process p p > w+ z
 add process p p > w- z
 add process p p > z z
 
-output diboson
+output diboson -nojpeg

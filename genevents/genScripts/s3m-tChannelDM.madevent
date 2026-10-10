@@ -1,0 +1,90 @@
+set run_card ebeam1 __EBEAM__
+set run_card ebeam2 __EBEAM__
+set run_card nevents __NEVENTS__
+set run_card iseed __ISEED__
+set param_card DECAY 2000005 Auto
+set param_card DECAY 51 0.0
+set param_card DECAY 52 0.0
+set param_card DECAY 53 0.0
+set param_card DECAY 56 0.0
+set param_card DECAY 57 0.0
+set param_card DECAY 58 0.0
+set param_card MASS 57 1.0e9
+set param_card MASS 51 1.0e9
+set param_card MASS 53 1.0e9
+set param_card MASS 56 1.0e9
+set param_card MASS 58 1.0e9
+set param_card MASS 1000001 1.0e9
+set param_card MASS 1000002 1.0e9
+set param_card MASS 1000003 1.0e9
+set param_card MASS 1000004 1.0e9
+set param_card MASS 1000005 1.0e9
+set param_card MASS 1000006 1.0e9
+set param_card MASS 1000011 1.0e9
+set param_card MASS 1000012 1.0e9
+set param_card MASS 1000013 1.0e9
+set param_card MASS 1000014 1.0e9
+set param_card MASS 1000015 1.0e9
+set param_card MASS 1000016 1.0e9
+set param_card MASS 2000001 1.0e9
+set param_card MASS 2000002 1.0e9
+set param_card MASS 2000003 1.0e9
+set param_card MASS 2000004 1.0e9
+set param_card MASS 2000006 1.0e9
+set param_card MASS 2000011 1.0e9
+set param_card MASS 2000013 1.0e9
+set param_card MASS 2000015 1.0e9
+set param_card MASS 5910001 1.0e9
+set param_card MASS 5910002 1.0e9
+set param_card MASS 5910003 1.0e9
+set param_card MASS 5910004 1.0e9
+set param_card MASS 5910005 1.0e9
+set param_card MASS 5910006 1.0e9
+set param_card MASS 5910011 1.0e9
+set param_card MASS 5910012 1.0e9
+set param_card MASS 5910013 1.0e9
+set param_card MASS 5910014 1.0e9
+set param_card MASS 5910015 1.0e9
+set param_card MASS 5910016 1.0e9
+set param_card MASS 5920001 1.0e9
+set param_card MASS 5920002 1.0e9
+set param_card MASS 5920003 1.0e9
+set param_card MASS 5920004 1.0e9
+set param_card MASS 5920005 1.0e9
+set param_card MASS 5920006 1.0e9
+set param_card MASS 5920011 1.0e9
+set param_card MASS 5920013 1.0e9
+set param_card MASS 5920015 1.0e9
+set param_card DMF1E 1 1 0.0
+set param_card DMF1E 2 2 0.0
+set param_card DMF1E 3 3 0.0
+set param_card DMF1L 1 1 0.0
+set param_card DMF1L 2 2 0.0
+set param_card DMF1L 3 3 0.0
+set param_card DMF3D 1 1 0.0
+set param_card DMF3D 2 2 0.0
+set param_card DMF3D 3 3 0.0
+set param_card DMF3Q 1 1 0.0
+set param_card DMF3Q 2 2 0.0
+set param_card DMF3Q 3 3 0.0
+set param_card DMF3U 1 1 0.0
+set param_card DMF3U 2 2 0.0
+set param_card DMF3U 3 3 0.0
+set param_card DMS1E 1 1 0.0
+set param_card DMS1E 2 2 0.0
+set param_card DMS1E 3 3 0.0
+set param_card DMS1L 1 1 0.0
+set param_card DMS1L 2 2 0.0
+set param_card DMS1L 3 3 0.0
+set param_card DMS3D 1 1 0.0
+set param_card DMS3D 2 2 0.0
+set param_card DMS3Q 1 1 0.0
+set param_card DMS3Q 2 2 0.0
+set param_card DMS3Q 3 3 0.0
+set param_card DMS3U 1 1 0.0
+set param_card DMS3U 2 2 0.0
+set param_card DMS3U 3 3 0.0
+set param_card MASS 2000005 __MMED__
+set param_card MASS 52 __MDM__
+set param_card DMS3D 3 3 __LAM__
+done

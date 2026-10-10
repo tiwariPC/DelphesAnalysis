@@ -7,9 +7,13 @@ dependencies:
   - python=3.11      # MadGraph's model reader needs <= 3.12
   - pip
   # compilers (MadGraph cannot be installed with pip)
-  - gfortran         # MadGraph matrix elements
-  - gxx              # Pythia8 / Delphes builds
+  # MadGraph 3.5.6 generates Fortran that gfortran >= 14 rejects at run time
+  # ("Missing comma between descriptors" in symmetry.f), so stay on 13.
+  - gfortran=13      # MadGraph matrix elements
+  - gxx=13           # Pythia8 / Delphes builds
+  - libgfortran5=13
   - make
+  - root=6.32
   # core analysis framework
   - coffea>=2025.12.0
   - awkward>=2.8.11

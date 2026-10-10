@@ -1,0 +1,5 @@
+import model __UFO_2HDMA_T2__
+define p = g u c d s u~ c~ d~ s~
+define j = p
+generate p p > b b~ Xd Xd~
+output bbdm_2hdma_type2_case1 -nojpeg

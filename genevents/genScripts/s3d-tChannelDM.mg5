@@ -1,0 +1,8 @@
+import model __UFO_TCHANNEL__-S3D_br --modelname
+define p = g u c d s u~ c~ d~ s~ b b~
+define j = p
+define excl = ys3qd3 ys3qd3~ xm xs xv xc xw xc~ xw~
+generate   p p > b  xd xd~ DMT=2 QCD=2 QED=0 @0 / excl
+add process p p > b  xd xd~   DMT=2 QCD=1 QED=0 @1 / excl
+add process p p > b~ xd xd~   DMT=2 QCD=1 QED=0 @2 / excl
+output tChannel_S3D_br_bbMET_bMET_LO -nojpeg

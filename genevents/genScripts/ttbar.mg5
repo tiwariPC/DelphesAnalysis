@@ -2,4 +2,4 @@ import model sm
 
 generate p p > t t~
 
-output ttbar
+output ttbar -nojpeg

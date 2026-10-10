@@ -1,51 +1,18 @@
 #!/usr/bin/env python3
-# ================================================================================
-# SELF-CONTAINED bbMET EVENT GENERATION (MadGraph5 + Pythia8 + Delphes)
-#
-# Everything lives inside this directory (genevents/):
-#     MG5_aMC_v3_5_6/     MadGraph, auto-downloaded if not found
-#     ufo_model/          t-channel DM UFO model (DMSimpt_v2_0)
-#     work/               MG5 process dirs, generated cards, logs
-#     DelphesSignal/      sig_*_delphes_events.root      (input of run_analysis_from_dirs.py)
-#     DelphesBackground/  <bkg>_delphes_events.root      (input of run_analysis_from_dirs.py)
-#
-# SIGNAL MODEL (--signal-model):
-#     tchannel (default)  S3M Majorana / S3D Dirac t-channel DM, p p > b xm b~ xm ...
-#     2hdma               2HDM+a, p p > b b~ xd xd~
-#
-# EXAMPLES:
-#     # one t-channel point, both S3M and S3D
-#     python mg5_Generate_Run_bbMET.py --proc signal --mode single --mMED 1000 --mDM 100 --lam 2.0
-#     # one 2HDM+a point
-#     python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --mode single --mA 500 --ma 100
-#     # same, Yukawa type II
-#     python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --hdma-type 2 --mA 500 --ma 100
-#     # full t-channel S3M grid
-#     python mg5_Generate_Run_bbMET.py --proc signal --dm-type s3m --mode grid
-#     # all backgrounds, CMS Delphes card (default), ROOT files into a chosen dir
-#     python mg5_Generate_Run_bbMET.py --proc bkg --background-outdir /data/DelphesBackground --delphes-card CMS
-#     # everything
-#     python mg5_Generate_Run_bbMET.py --proc all --mode grid
-#     # show cards only, do not run
-#     python mg5_Generate_Run_bbMET.py --proc signal --mode single --dry-run
-#     # detached
-#     nohup python mg5_Generate_Run_bbMET.py --proc all --mode grid > gen.log 2>&1 &
-#
-# ENVIRONMENT:
-#     MG5_EXE          use this launcher instead of searching/downloading
-#     MG5_PYTHON       interpreter running MadGraph (must be Python <= 3.12)
-#     MG5_TARBALL_URL  override the MadGraph download URL
-#     UFO_TCHANNEL     override t-channel UFO model path
-#     UFO_2HDMA        2HDM+a type I model (name or path), default Pseudoscalar_2HDMI-bbMET_5FS
-#     UFO_2HDMA_T2     2HDM+a type II model path, default ufo_model/Pseudoscalar_2HDM
-#
-# NOTES:
-#     * Pythia8 and Delphes are installed into MadGraph on first use
-#       ("install pythia8", "install Delphes"). Delphes needs ROOT in the environment.
-#     * Cross-sections (pb, MG5 LO) are parsed from each run log and written to
-#       config/signal_cross_sections.yaml (2hdma), config/tchannel_signal_cross_sections.yaml
-#       (tchannel) and config/background_cross_sections.yaml.
-# ================================================================================
+"""Self-contained MadGraph5 + Pythia8 + Delphes generation for bbMET.
+
+Cards live in genScripts/ (<name>.mg5 process, <name>.madevent settings); MadGraph is
+installed into this directory on first use. Delphes ROOT files go to DelphesSignal/ and
+DelphesBackground/ (inputs of run_analysis_from_dirs.py).
+
+  python mg5_Generate_Run_bbMET.py --proc signal --mode single --mMED 1000 --mDM 100 --lam 2.0
+  python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --mA 500 --ma 100
+  python mg5_Generate_Run_bbMET.py --proc bkg --background-outdir DIR --delphes-card CMS
+  python mg5_Generate_Run_bbMET.py --proc all --mode grid     # add --dry-run to only print cards
+
+Environment: MG5_EXE, MG5_PYTHON (<= 3.12), MG5_TARBALL_URL, UFO_TCHANNEL, UFO_2HDMA.
+Cross-sections are written to config/*cross_sections.yaml.
+"""
 
 import argparse
 import itertools
@@ -77,12 +44,8 @@ MAX_PYTHON = (3, 12)   # newest version MadGraph's model reader tolerates
 # t-channel model path with NO space before the restriction (see reference script):
 # "<path>/DMSimpt_v2_0-S3M_br"; a separate "-res_..." token is silently dropped.
 UFO_TCHANNEL = os.environ.get("UFO_TCHANNEL", os.path.join(_SCRIPT_DIR, "ufo_model", "DMSimpt_v2_0"))
-# 2HDM+a: type I (5FS, bbMET model, resolved by MadGraph by name unless overridden)
-# and type II (UFO shipped in ufo_model/Pseudoscalar_2HDM, 4FS, DM particle "Xd").
-UFO_2HDMA = {
-    "1": os.environ.get("UFO_2HDMA", "Pseudoscalar_2HDMI-bbMET_5FS"),
-    "2": os.environ.get("UFO_2HDMA_T2", os.path.join(_SCRIPT_DIR, "ufo_model", "Pseudoscalar_2HDM")),
-}
+# 2HDM+a type II UFO shipped in ufo_model/Pseudoscalar_2HDM (4FS, DM particle "Xd").
+UFO_2HDMA = os.environ.get("UFO_2HDMA", os.path.join(_SCRIPT_DIR, "ufo_model", "Pseudoscalar_2HDM"))
 
 WORK_DIR = os.path.join(_SCRIPT_DIR, "work")
 CARD_DIR = os.path.join(WORK_DIR, "textFiles")
@@ -100,83 +63,23 @@ T_LAM_VALS = [1.0, 1.5, 2.0, 2.2, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
 H_MASS_A = [300, 500, 700, 900, 1200, 1500]
 H_MASS_a = [50, 100, 200, 300, 400, 500, 600, 800, 1000, 1200]
 
+# Process cards (model import, generate, output) and launch-settings cards live in
+# genScripts/ and are editable: <name>.mg5 and <name>.madevent. Placeholders
+# __LIKE_THIS__ are filled in by render_template(); the process directory name is taken
+# from the card's own "output" line. The launch/shower/detector/Delphes-card lines are
+# added by the script because they depend on the run name and on the process dir state.
+TEMPLATE_DIR = os.path.join(_SCRIPT_DIR, "genScripts")
+
 TCHANNEL_PROCS = {
-    "s3m": dict(
-        output="tChannel_S3M_br_bbMET_bMET_LO", dm_pdg=52, restrict="S3M_br",
-        body="""define p = g u c d s u~ c~ d~ s~ b b~
-define j = p
-define excl = ys3qd3 ys3qd3~ xd xd~ xs xv xc xw xc~ xw~
-generate   p p > b  xm b~ xm  DMT=2 QCD=2 QED=0 @0 / excl
-add process p p > b  xm xm    DMT=2 QCD=1 QED=0 @1 / excl
-add process p p > b~ xm xm    DMT=2 QCD=1 QED=0 @2 / excl
-add process p p > b  b  xm xm DMT=2 QCD=2 QED=0 @3 / excl
-add process p p > b~ b~ xm xm DMT=2 QCD=2 QED=0 @4 / excl
-""",
-    ),
-    "s3d": dict(
-        output="tChannel_S3D_br_bbMET_bMET_LO", dm_pdg=57, restrict="S3D_br",
-        body="""define p = g u c d s u~ c~ d~ s~ b b~
-define j = p
-define excl = ys3qd3 ys3qd3~ xm xs xv xc xw xc~ xw~
-generate   p p > b  xd xd~ DMT=2 QCD=2 QED=0 @0 / excl
-add process p p > b  xd xd~   DMT=2 QCD=1 QED=0 @1 / excl
-add process p p > b~ xd xd~   DMT=2 QCD=1 QED=0 @2 / excl
-""",
-    ),
+    "s3m": dict(mg5="s3m-tChannelDM.mg5", madevent="s3m-tChannelDM.madevent"),
+    "s3d": dict(mg5="s3d-tChannelDM.mg5", madevent="s3d-tChannelDM.madevent"),
 }
 
-# Decoupled masses (1e9) and zeroed couplings from restrict_S3M_br / restrict_S3D_br.
-_DECOUPLE_MASSES = [
-    51, 53, 56, 58,
-    1000001, 1000002, 1000003, 1000004, 1000005, 1000006,
-    1000011, 1000012, 1000013, 1000014, 1000015, 1000016,
-    2000001, 2000002, 2000003, 2000004, 2000006,
-    2000011, 2000013, 2000015,
-    5910001, 5910002, 5910003, 5910004, 5910005, 5910006,
-    5910011, 5910012, 5910013, 5910014, 5910015, 5910016,
-    5920001, 5920002, 5920003, 5920004, 5920005, 5920006,
-    5920011, 5920013, 5920015,
-]
-_ZERO_COUPLINGS = [
-    ("DMF1E", [(1, 1), (2, 2), (3, 3)]),
-    ("DMF1L", [(1, 1), (2, 2), (3, 3)]),
-    ("DMF3D", [(1, 1), (2, 2), (3, 3)]),
-    ("DMF3Q", [(1, 1), (2, 2), (3, 3)]),
-    ("DMF3U", [(1, 1), (2, 2), (3, 3)]),
-    ("DMS1E", [(1, 1), (2, 2), (3, 3)]),
-    ("DMS1L", [(1, 1), (2, 2), (3, 3)]),
-    ("DMS3D", [(1, 1), (2, 2)]),        # (3,3) is active, set per point
-    ("DMS3Q", [(1, 1), (2, 2), (3, 3)]),
-    ("DMS3U", [(1, 1), (2, 2), (3, 3)]),
-]
+HDMA_PROC = dict(mg5="twoHDMa-typeII.mg5", madevent="twoHDMa-typeII.madevent")
 
-HDMA_PROC = {
-    "1": dict(
-        output="bbdm_2hdma_type1_case1", set_mb0=True,
-        body="""define p = g u c d s u~ c~ d~ s~ b b~
-define j = p
-generate p p > b b~ xd xd~
-""",
-    ),
-    # 4FS: b is massive in this model, so keep it out of the proton. DM particle is "Xd".
-    "2": dict(
-        output="bbdm_2hdma_type2_case1", set_mb0=False,
-        body="""define p = g u c d s u~ c~ d~ s~
-define j = p
-generate p p > b b~ Xd Xd~
-""",
-    ),
-}
-
-BACKGROUNDS = {
-    "dyjets": "generate p p > z j j, z > l+ l-\n",
-    "ttbar": "generate p p > t t~\n",
-    "diboson": "generate p p > w+ w-\nadd process p p > w+ z\nadd process p p > w- z\nadd process p p > z z\n",
-    "sTop_tchannel": "define p = g u c d s u~ c~ d~ s~ b b~\ndefine j = p\ngenerate p p > t j\nadd process p p > t~ j\n",
-    "sTop_tW": "define p = g u c d s u~ c~ d~ s~ b b~\ndefine j = p\ngenerate p p > t w-\nadd process p p > t~ w+\n",
-    "wlnjets": "generate p p > w+ j j, w+ > l+ vl\nadd process p p > w- j j, w- > l- vl~\n",
-    "znnjets": "generate p p > z j j, z > vl vl~\n",
-}
+# Backgrounds: each one is genScripts/<name>.mg5 (process) launched with the shared
+# background settings below.
+BACKGROUNDS = ["dyjets", "ttbar", "diboson", "sTop_tchannel", "sTop_tW", "wlnjets", "znnjets"]
 
 # ------------------------------------------------------------------ MadGraph install
 def local_madgraph():
@@ -274,29 +177,41 @@ def check_environment():
     print(f"[env] Python   : {MG5_PYTHON} ({ver[0]}.{ver[1]})", flush=True)
 
 
-def disable_mg5_autoupdate(mg5_root):
-    """The startup 'update MG5?' question swallows the next line of a -f script."""
+def restore_mg5_autoupdate_default(mg5_root):
+    """Earlier versions of this script wrote 'auto_update = 0' into MadGraph's config.
+    MadGraph then keeps it as a string and crashes in its quit handler
+    (TypeError: bad operand type for abs(): 'str'). Put the shipped default back."""
     conf = os.path.join(mg5_root, "input", "mg5_configuration.txt")
     if not os.path.exists(conf):
         return
     with open(conf) as f:
         text = f.read()
-    new = re.sub(r"^#*\s*auto_update\s*=.*$", "auto_update = 0", text, flags=re.M)
+    new = re.sub(r"^auto_update\s*=.*$", "# auto_update = 7", text, flags=re.M)
     if new != text:
         with open(conf, "w") as f:
             f.write(new)
+        print("[env] restored default auto_update in MadGraph config", flush=True)
+
+
+def delphes_installed(mg5_root):
+    """Delphes counts as installed only when its HepMC reader was built."""
+    d = os.path.join(mg5_root, "Delphes")
+    return os.path.isdir(d) and any(n.startswith("DelphesHepMC") and os.access(os.path.join(d, n), os.X_OK)
+                                    for n in os.listdir(d))
 
 
 def ensure_tools():
     """Install Pythia8 and Delphes into MadGraph if missing."""
     mg5_root = os.path.dirname(os.path.dirname(MG5_EXE))
-    disable_mg5_autoupdate(mg5_root)
+    restore_mg5_autoupdate_default(mg5_root)
     heptools = os.path.join(mg5_root, "HEPTools")
     need = []
     if not os.path.isdir(os.path.join(heptools, "pythia8")):
         need.append("install pythia8")
-    if not os.path.isdir(os.path.join(mg5_root, "Delphes")):
+    if not delphes_installed(mg5_root):
         need.append("install Delphes")
+    if not os.path.isdir(os.path.join(mg5_root, "ExRootAnalysis")):
+        need.append("install ExRootAnalysis")
     if not need:
         return
     card = os.path.join(CARD_DIR, "install_tools.txt")
@@ -304,7 +219,7 @@ def ensure_tools():
         f.write("\n".join(need) + "\n")
     print(f"[env] installing: {', '.join(need)} (needs ROOT for Delphes)", flush=True)
     execute_madgraph(card, "INSTALL")
-    if not os.path.isdir(os.path.join(mg5_root, "Delphes")) and "install Delphes" in need:
+    if "install Delphes" in need and not delphes_installed(mg5_root):
         sys.exit("Error: Delphes install failed. Ensure ROOT (root-config) is in PATH, "
                  f"see {os.path.join(LOG_DIR, 'madgraph_install_tools.log')}")
 
@@ -358,6 +273,15 @@ def _tail_log(log_path, stop_event, prefix):
                 print(f"  [{prefix}] {line}", flush=True)
 
 
+def _raise_stack_limit():
+    """Equivalent of 'ulimit -s unlimited' (as the old condor job did): MadEvent's
+    Fortran executables (gensym, madevent) crash on the default 8 MB stack."""
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    if soft != hard:
+        resource.setrlimit(resource.RLIMIT_STACK, (hard, hard))
+
+
 def execute_madgraph(card_path, prefix):
     """Run one MG5 card from WORK_DIR; return the log path."""
     log_path = os.path.join(LOG_DIR, "madgraph_" + os.path.basename(card_path).replace(".txt", ".log"))
@@ -365,9 +289,13 @@ def execute_madgraph(card_path, prefix):
     stop = threading.Event()
     tailer = threading.Thread(target=_tail_log, args=(log_path, stop, prefix), daemon=True)
     tailer.start()
+    # The conda env can ship its own Pythia8 and set PYTHIA8DATA to it; MadGraph builds
+    # its own (different version) and Pythia aborts on the version mismatch.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHIA8DATA", "PYTHIA8")}
     with open(log_path, "w") as log_file:
         result = subprocess.run([MG5_PYTHON, MG5_EXE, "-f", card_path], cwd=WORK_DIR,
-                                stdout=log_file, stderr=subprocess.STDOUT)
+                                stdout=log_file, stderr=subprocess.STDOUT,
+                                preexec_fn=_raise_stack_limit, env=env)
     stop.set()
     tailer.join(timeout=2)
     if result.returncode != 0:
@@ -401,36 +329,39 @@ def launch_header(run_name, process_dir, dir_exists):
     return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=OFF\n" + card
 
 
-def tchannel_settings(dm_pdg, mMED, mDM, lam, nevents, seed):
-    inactive_dm = 57 if dm_pdg == 52 else 52
-    lines = [
-        f"set run_card ebeam1 {EBEAM}", f"set run_card ebeam2 {EBEAM}",
-        f"set run_card nevents {nevents}", f"set run_card iseed {seed}",
-        "set param_card DECAY 2000005 Auto",
-        *[f"set param_card DECAY {p} 0.0" for p in (51, 52, 53, 56, 57, 58)],
-        f"set param_card MASS {inactive_dm} 1.0e9",
-        *[f"set param_card MASS {p} 1.0e9" for p in _DECOUPLE_MASSES],
-    ]
-    for block, idx in _ZERO_COUPLINGS:
-        lines += [f"set param_card {block} {i} {j} 0.0" for i, j in idx]
-    lines += [f"set param_card MASS 2000005 {mMED}", f"set param_card MASS {dm_pdg} {mDM}",
-              f"set param_card DMS3D 3 3 {lam}", "done"]
-    return "\n".join(lines) + "\n"
+def render_template(name, values):
+    """Read genScripts/<name> and replace every __KEY__ with values[KEY]."""
+    path = os.path.join(TEMPLATE_DIR, name)
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        sys.exit(f"Error: cannot read launch card template {path}: {e}")
+    for key, val in values.items():
+        text = text.replace(f"__{key}__", str(val))
+    left = sorted(set(re.findall(r"__[A-Z0-9_]+__", text)))
+    if left:
+        sys.exit(f"Error: unfilled placeholders {left} in {path}")
+    return text if text.endswith("\n") else text + "\n"
 
 
-def hdma_settings(mA, ma, nevents, seed, set_mb0=True):
-    lines = [
-        f"set run_card ebeam1 {EBEAM}", f"set run_card ebeam2 {EBEAM}",
-        f"set run_card nevents {nevents}", f"set run_card iseed {seed}",
-        "set param_card DMINPUTS 1 1.0", "set param_card FRBLOCK 2 3", "set param_card FRBLOCK 3 1",
-        "set param_card HIGGS 1 6", "set param_card HIGGS 2 0", "set param_card HIGGS 3 0",
-        "set param_card HIGGS 5 0.9", *(["set param_card MASS 5 0.0"] if set_mb0 else []),
-        f"set param_card MASS 35 {mA}", f"set param_card MASS 36 {mA}", f"set param_card MASS 37 {mA}",
-        "set param_card MASS 52 1", f"set param_card MASS 55 {ma}",
-        *[f"set param_card DECAY {p} auto" for p in (25, 35, 36, 37, 55)],
-        "done",
-    ]
-    return "\n".join(lines) + "\n"
+def load_process_card(name, values):
+    """Render a .mg5 card; return (text, process directory from its 'output' line)."""
+    text = render_template(name, values)
+    m = re.search(r"^output\s+(\S+)", text, flags=re.M)
+    if not m:
+        sys.exit(f"Error: no 'output <dir>' line in {os.path.join(TEMPLATE_DIR, name)}")
+    return text, m.group(1)
+
+
+def tchannel_settings(dm, mMED, mDM, lam, nevents, seed):
+    return render_template(TCHANNEL_PROCS[dm]["madevent"], dict(
+        EBEAM=EBEAM, NEVENTS=nevents, ISEED=seed, MMED=mMED, MDM=mDM, LAM=lam))
+
+
+def hdma_settings(mA, ma, nevents, seed):
+    return render_template(HDMA_PROC["madevent"], dict(
+        EBEAM=EBEAM, NEVENTS=nevents, ISEED=seed, MCA=mA, MSA=ma))
 
 
 def background_settings(nevents, seed):
@@ -449,13 +380,19 @@ def reset_param_card(process_dir):
 _xs_lock = threading.Lock()
 
 
-def run_point(*, tag, import_line, proc_body, process_dir, settings, run_name, dest_file, xs_key, args):
+def run_point(*, tag, proc_card, process_dir, settings, run_name, dest_file, xs_key, args):
     """Generate the process dir if needed, launch one run, collect ROOT file + xsec."""
     dest = os.path.join(args.outdir_for(tag), dest_file)
     if os.path.exists(dest) and not args.force:
         print(f"  [{tag}] skip {run_name}: {dest_file} exists (use --force)", flush=True)
         return
-    dir_exists = os.path.isdir(os.path.join(WORK_DIR, process_dir))
+    proc_path = os.path.join(WORK_DIR, process_dir)
+    # A process dir is usable only if MadGraph finished writing it; a half-built one
+    # (e.g. an earlier run died at 'output') is wiped and regenerated.
+    dir_exists = os.path.isfile(os.path.join(proc_path, "SubProcesses", "proc_characteristics"))
+    if os.path.isdir(proc_path) and not dir_exists:
+        print(f"  [{tag}] removing incomplete process dir {process_dir}", flush=True)
+        shutil.rmtree(proc_path)
     if dir_exists:
         reset_param_card(process_dir)
 
@@ -463,7 +400,7 @@ def run_point(*, tag, import_line, proc_body, process_dir, settings, run_name, d
     card_path = os.path.join(CARD_DIR, card_name)
     with open(card_path, "w") as f:
         if not dir_exists:
-            f.write(f"{import_line}\n{proc_body}output {process_dir} -nojpeg\n")
+            f.write(proc_card)
         f.write(launch_header(run_name, process_dir, True))
         f.write(settings)
     if args.dry_run:
@@ -554,10 +491,9 @@ def run_tchannel(dm, args, failed):
         name = f"mMed{mMED}_mDM{mDM}_lam{fmt(lam)}"
         print(f"  [{tag}] point {i}/{len(points)}: {name}", flush=True)
         try:
-            run_point(tag=tag,
-                      import_line=f"import model {UFO_TCHANNEL}-{cfg['restrict']} --modelname",
-                      proc_body=cfg["body"], process_dir=cfg["output"],
-                      settings=tchannel_settings(cfg["dm_pdg"], mMED, mDM, lam, args.nevents, args.seed + i),
+            proc_card, process_dir = load_process_card(cfg["mg5"], dict(UFO_TCHANNEL=UFO_TCHANNEL))
+            run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
+                      settings=tchannel_settings(dm, mMED, mDM, lam, args.nevents, args.seed + i),
                       run_name=name, dest_file=f"sig_tchannel_{dm}_{name}_delphes_events.root",
                       xs_key=(mMED, mDM, lam), args=args)
         except Exception as e:
@@ -567,7 +503,6 @@ def run_tchannel(dm, args, failed):
 
 def run_2hdma(args, failed):
     tag = "2HDMA"
-    cfg = HDMA_PROC[args.hdma_type]
     if args.mode == "single":
         points = [(args.mA, args.ma)]
     else:
@@ -578,9 +513,9 @@ def run_2hdma(args, failed):
         name = f"mA{mA}_ma{ma}"
         print(f"  [{tag}] point {i}/{len(points)}: {name}", flush=True)
         try:
-            run_point(tag=tag, import_line=f"import model {UFO_2HDMA[args.hdma_type]}",
-                      proc_body=cfg["body"], process_dir=cfg["output"],
-                      settings=hdma_settings(mA, ma, args.nevents, args.seed + i, cfg["set_mb0"]),
+            proc_card, process_dir = load_process_card(HDMA_PROC["mg5"], dict(UFO_2HDMA_T2=UFO_2HDMA))
+            run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
+                      settings=hdma_settings(mA, ma, args.nevents, args.seed + i),
                       run_name=name, dest_file=f"sig_bbdm_mA{mA}_ma{ma}_delphes_events.root",
                       xs_key=(mA, ma), args=args)
         except Exception as e:
@@ -591,8 +526,9 @@ def run_2hdma(args, failed):
 def run_background(bkg, args, failed):
     tag = bkg
     try:
-        run_point(tag=tag, import_line="import model sm", proc_body=BACKGROUNDS[bkg],
-                  process_dir=bkg, settings=background_settings(args.nevents, args.seed),
+        proc_card, process_dir = load_process_card(f"{bkg}.mg5", {})
+        run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
+                  settings=background_settings(args.nevents, args.seed),
                   run_name=f"{bkg}_run", dest_file=f"{bkg}_delphes_events.root",
                   xs_key=bkg, args=args)
     except Exception as e:
@@ -607,8 +543,6 @@ def main():
                         f"({', '.join(BACKGROUNDS)})")
     p.add_argument("--mode", choices=["single", "grid"], default="single")
     p.add_argument("--signal-model", choices=["tchannel", "2hdma"], default="tchannel")
-    p.add_argument("--hdma-type", choices=["1", "2"], default="1",
-                   help="2hdma only: Yukawa type I (Pseudoscalar_2HDMI-bbMET_5FS) or II (ufo_model/Pseudoscalar_2HDM)")
     p.add_argument("--dm-type", choices=["s3m", "s3d", "both"], default="both",
                    help="t-channel only: Majorana S3M, Dirac S3D, or both")
     p.add_argument("--mMED", type=int, default=1000, help="t-channel mediator mass (single)")

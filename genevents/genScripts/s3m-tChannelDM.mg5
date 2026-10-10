@@ -1,0 +1,10 @@
+import model __UFO_TCHANNEL__-S3M_br --modelname
+define p = g u c d s u~ c~ d~ s~ b b~
+define j = p
+define excl = ys3qd3 ys3qd3~ xd xd~ xs xv xc xw xc~ xw~
+generate   p p > b  xm b~ xm  DMT=2 QCD=2 QED=0 @0 / excl
+add process p p > b  xm xm    DMT=2 QCD=1 QED=0 @1 / excl
+add process p p > b~ xm xm    DMT=2 QCD=1 QED=0 @2 / excl
+add process p p > b  b  xm xm DMT=2 QCD=2 QED=0 @3 / excl
+add process p p > b~ b~ xm xm DMT=2 QCD=2 QED=0 @4 / excl
+output tChannel_S3M_br_bbMET_bMET_LO -nojpeg

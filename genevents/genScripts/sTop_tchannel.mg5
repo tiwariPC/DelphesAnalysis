@@ -7,4 +7,4 @@ define j = p
 generate p p > t j
 add process p p > t~ j
 
-output sTop_tchannel
+output sTop_tchannel -nojpeg

@@ -6,4 +6,4 @@ define j = p
 generate p p > t w-
 add process p p > t~ w+
 
-output sTop_tW
+output sTop_tW -nojpeg
