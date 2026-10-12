@@ -1,0 +1,5 @@
+# Generator-level cuts for diboson, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# W/Z are decayed by Pythia, so there is no parton-level MET; MET > 250 GeV needs at least
+# one boosted boson (ptheavy acts on particles heavier than 10 GeV).
+set run_card ptheavy 100

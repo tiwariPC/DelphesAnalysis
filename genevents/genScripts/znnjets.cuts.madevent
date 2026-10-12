@@ -1,0 +1,4 @@
+# Generator-level cuts for znnjets, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# Z -> nu nu: the neutrino pair pT is the Z pT, i.e. the true MET.
+set run_card misset 150

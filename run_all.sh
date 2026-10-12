@@ -20,6 +20,7 @@
 #   --bkg-nruns N        runs per background, merged           (default 1)
 #   --jobs N             samples generated at the same time; CPU cores are
 #                        split between them                    (default 4)
+#   --cores N            total CPU cores for generation        (default: all)
 #   --delphes-card C     Delphes card, 'CMS' or path           (default CMS)
 #   --data-dir D         large files: MadGraph work dirs and logs, Delphes ROOT files
 #                        (default genevents)
@@ -30,6 +31,9 @@
 #   --lumi L             luminosity in fb^-1                   (default 290.0)
 #   --skip-gen           skip event generation
 #   --force              regenerate samples whose Delphes file already exists
+#   --slim-delphes       write only the Delphes branches the analysis reads (smaller files)
+#   --bkg-cuts           generator-level background cuts (genevents/genScripts/<bkg>.cuts.madevent);
+#                        backgrounds go to <data-dir>/DelphesBackground_bkgcuts
 #   --limits             also run Combine limits (needs 'combine')
 #   --signal-xs-unit     set all signal cross-sections to 1 pb in the analysis
 #   --no-tmux            run in the current shell instead of a detached tmux session
@@ -48,7 +52,7 @@ for a in "$@"; do
     case "$a" in
         --no-tmux) USE_TMUX=0;;
         --attach) ATTACH=1;;
-        -h|--help) sed -n 2,40p "$0"; exit 0;;
+        -h|--help) sed -n 2,44p "$0"; exit 0;;
         *) PASS_ARGS+=("$a");;
     esac
 done
@@ -78,10 +82,10 @@ if [ "$USE_TMUX" -eq 1 ] && [ -z "${TMUX:-}" ]; then
 fi
 
 NEVENTS=10000; MODE=points; NPOINTS=3; POINTS=""; SIGNAL_MODEL=tchannel; DM_TYPE=s3m; LAM=2.2
-SIG_NRUNS=1; BKG_NRUNS=1; DELPHES_CARD=CMS; JOBS=4
+SIG_NRUNS=1; BKG_NRUNS=1; DELPHES_CARD=CMS; GEN_JOBS=4; GEN_CORES=0
 SIGNAL_DIR=""; BKG_DIR=""; WORK_DIR=""
 DATA_DIR="$REPO_DIR/genevents"
-OUTPUT_DIR=output; LUMI=290.0; SKIP_GEN=0; LIMITS=0; XS_UNIT=0; FORCE=0
+OUTPUT_DIR=output; LUMI=290.0; SKIP_GEN=0; LIMITS=0; XS_UNIT=0; FORCE=0; SLIM=0; BKG_CUTS=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -94,7 +98,8 @@ while [ $# -gt 0 ]; do
         --lam) LAM="$2"; shift 2;;
         --sig-nruns) SIG_NRUNS="$2"; shift 2;;
         --bkg-nruns) BKG_NRUNS="$2"; shift 2;;
-        --jobs) JOBS="$2"; shift 2;;
+        --jobs) GEN_JOBS="$2"; shift 2;;
+        --cores) GEN_CORES="$2"; shift 2;;
         --delphes-card) DELPHES_CARD="$2"; shift 2;;
         --data-dir) DATA_DIR="$2"; shift 2;;
         --work-dir) WORK_DIR="$2"; shift 2;;
@@ -104,6 +109,8 @@ while [ $# -gt 0 ]; do
         --lumi) LUMI="$2"; shift 2;;
         --skip-gen) SKIP_GEN=1; shift;;
         --force) FORCE=1; shift;;
+        --slim-delphes) SLIM=1; shift;;
+        --bkg-cuts) BKG_CUTS=1; shift;;
         --limits) LIMITS=1; shift;;
         --signal-xs-unit) XS_UNIT=1; shift;;
         *) echo "Unknown option: $1" >&2; exit 1;;
@@ -111,7 +118,14 @@ while [ $# -gt 0 ]; do
 done
 DATA_DIR="${DATA_DIR/#\~/$HOME}"
 SIGNAL_DIR="${SIGNAL_DIR:-$DATA_DIR/DelphesSignal}"
-BKG_DIR="${BKG_DIR:-$DATA_DIR/DelphesBackground}"
+# Backgrounds with and without generator cuts are kept apart (files and cross-sections).
+if [ "$BKG_CUTS" -eq 1 ]; then
+    BKG_DIR="${BKG_DIR:-$DATA_DIR/DelphesBackground_bkgcuts}"
+    BKG_XSEC="config/background_cuts_cross_sections.yaml"
+else
+    BKG_DIR="${BKG_DIR:-$DATA_DIR/DelphesBackground}"
+    BKG_XSEC="config/background_cross_sections.yaml"
+fi
 WORK_DIR="${WORK_DIR:-$DATA_DIR/work}"
 mkdir -p "$DATA_DIR"
 echo "Data dir: $DATA_DIR"
@@ -148,20 +162,22 @@ source "$REPO_DIR/setup.sh"
 set -u
 
 if [ "$SKIP_GEN" -eq 0 ]; then
-    step "2/6 generate signal ($SIGNAL_MODEL: ${POINT_ARGS[*]}) and backgrounds, $JOBS at a time"
+    step "2/6 generate signal ($SIGNAL_MODEL: ${POINT_ARGS[*]}) and backgrounds, $GEN_JOBS at a time"
     python genevents/mg5_Generate_Run_bbMET.py --proc all "${POINT_ARGS[@]}" \
         --signal-model "$SIGNAL_MODEL" --dm-type "$DM_TYPE" --lam "$LAM" \
         --delphes-card "$DELPHES_CARD" --nevents "$NEVENTS" \
-        --nruns "$SIG_NRUNS" --bkg-nruns "$BKG_NRUNS" --jobs "$JOBS" \
+        --nruns "$SIG_NRUNS" --bkg-nruns "$BKG_NRUNS" --jobs "$GEN_JOBS" --cores "$GEN_CORES" \
         --data-dir "$DATA_DIR" --work-dir "$WORK_DIR" \
         --signal-outdir "$SIGNAL_DIR" --background-outdir "$BKG_DIR" \
-        $( [ "$FORCE" -eq 1 ] && echo --force )
+        $( [ "$FORCE" -eq 1 ] && echo --force ) $( [ "$SLIM" -eq 1 ] && echo --slim-delphes ) \
+        $( [ "$BKG_CUTS" -eq 1 ] && echo --bkg-cuts )
 else
     step "2/6 generation skipped"
 fi
 
 step "3/6 analysis (regions, plots, datacards)"
-ANALYSIS_ARGS=(--signal-dir "$SIGNAL_DIR" --signal-tag "$SIGNAL_TAG" --background-dir "$BKG_DIR" --lumi "$LUMI"
+ANALYSIS_ARGS=(--signal-dir "$SIGNAL_DIR" --signal-tag "$SIGNAL_TAG" --background-dir "$BKG_DIR"
+               --background-xsec "$BKG_XSEC" --lumi "$LUMI"
                --output-dir "$OUTPUT_DIR" --signal-xsec "$SIGNAL_XSEC")
 if [ "$XS_UNIT" -eq 1 ]; then ANALYSIS_ARGS+=(--signal-xs-unit); fi
 python scripts/run_analysis_from_dirs.py "${ANALYSIS_ARGS[@]}"

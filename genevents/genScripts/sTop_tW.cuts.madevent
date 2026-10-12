@@ -1,0 +1,5 @@
+# Generator-level cuts for sTop_tW, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# Top (and W) are decayed by Pythia, so there is no parton-level MET; require at least one
+# boosted heavy particle (ptheavy acts on particles heavier than 10 GeV).
+set run_card ptheavy 100

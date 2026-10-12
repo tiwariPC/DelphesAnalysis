@@ -21,6 +21,9 @@ python mg5_Generate_Run_bbMET.py --proc all --npoints 3 --jobs 4 \
 | `--signal-outdir`, `--background-outdir` | Delphes output | `<data-dir>/DelphesSignal`, `<data-dir>/DelphesBackground` |
 | `--nruns`, `--bkg-nruns` | runs per signal point / background, merged with `hadd` | `1`, `--nruns` |
 | `--jobs N` | samples at the same time; each MadGraph gets cores/N cores, and concurrent signal points use their own process dir copies (`<dir>_j1`, ...) | `1` |
+| `--cores N` | total cores split between the jobs | all |
+| `--slim-delphes` | Delphes card copy writes only Jet, Electron, Muon, Photon, MissingET, ScalarHT, GenJet, GenMissingET | off |
+| `--bkg-cuts` | add `genScripts/<bkg>.cuts.madevent` (generator-level cuts) to each background; output to `<data-dir>/DelphesBackground_bkgcuts`, cross-sections to `../config/background_cuts_cross_sections.yaml` | off |
 
 `python mg5_Generate_Run_bbMET.py --help` and the docstring at the top of the script list all options.
 
@@ -32,7 +35,8 @@ python mg5_Generate_Run_bbMET.py --proc all --npoints 3 --jobs 4 \
   `<work-dir>/` (all needed dirs are built first, one at a time), runs the requested points, and
   logs to `<work-dir>/logFiles/`.
 - Launches with `shower=Pythia8`, `detector=Delphes` (CMS card by default, `--delphes-card`) and
-  `analysis=ExRoot`.
+  `analysis=OFF`. The ExRoot LHE->ROOT copy is not needed, and for large runs (e.g. 100k events)
+  MadGraph's ExRoot step races with its background gzip of the LHE file and deletes the events.
 - Makes the DM particles invisible in the Delphes card. Stock cards only know the SM and SUSY
   invisibles, so the model DM states (PDG 51, 52, 53, 56, 57, 58; `INVISIBLE_DM_PDGS` in the script)
   would otherwise deposit their energy in the calorimeters, end up in jets and give almost no MET.

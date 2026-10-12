@@ -1,0 +1,7 @@
+# Generator-level cuts for wlnjets, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# W -> l nu enters the signal regions when the lepton is lost; the lost lepton adds to the
+# reconstructed MET, so the neutrino pT cut is looser than for Z -> nu nu.
+set run_card misset 100
+# leading parton-level jet (signal regions: leading jet > 100 GeV)
+set run_card xptj 80

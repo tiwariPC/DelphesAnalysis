@@ -1,0 +1,5 @@
+# Generator-level cuts for ttbar, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# Tops are decayed by Pythia, so there is no parton-level MET; neutrinos from tops nearly at
+# rest cannot give MET > 250 GeV, so at least one top must be boosted.
+set run_card ptheavy 100

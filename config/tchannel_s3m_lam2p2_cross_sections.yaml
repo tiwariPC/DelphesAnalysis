@@ -1,0 +1,10 @@
+# t-channel DM signal cross-sections, S3M, lambda = 2.2 (same layout as signal_cross_sections.yaml). Units: pb.
+# Keys: mMED (as mA), then mDM (as ma).
+
+signals:
+  500:
+    50: 2.298
+  1000:
+    100: 0.09016
+  1500:
+    500: 0.002117

@@ -26,6 +26,11 @@ Usage: python mg5_Generate_Run_bbMET.py [options]
   --jobs N              samples generated at the same time; each MadGraph gets
                         cores/N cores, and concurrent signal points use copies of the
                         process dir (<dir>_j1, ...)              (default 1)
+  --cores N             total cores split between the jobs       (default: all)
+  --slim-delphes        write only the Delphes branches the analysis reads (jets, leptons,
+                        photons, MET, HT, gen jets/MET): much smaller files
+  --bkg-cuts            generator-level cuts for the backgrounds from genScripts/<bkg>.cuts.madevent;
+                        output to <data-dir>/DelphesBackground_bkgcuts
   --seed S              base iseed; point index and run number are added (default 1000)
   --data-dir D          base dir for large files                 (default genevents/)
   --work-dir D          MadGraph process dirs, cards, logs       (default <data-dir>/work)
@@ -53,7 +58,8 @@ MadGraph itself stays in genevents/ (its config holds absolute paths).
 
 Environment: MG5_EXE, MG5_PYTHON (<= 3.12), MG5_TARBALL_URL, UFO_TCHANNEL, UFO_2HDMA.
 Cross-sections (mean over runs) go to config/signal_cross_sections.yaml (2hdma),
-config/tchannel_{dm}_lam{L}_cross_sections.yaml (tchannel) and config/background_cross_sections.yaml.
+config/tchannel_{dm}_lam{L}_cross_sections.yaml (tchannel) and config/background_cross_sections.yaml
+(config/background_cuts_cross_sections.yaml with --bkg-cuts).
 """
 
 import argparse
@@ -388,9 +394,15 @@ DELPHES_CARD = ""   # resolved path of the Delphes card, set in main()
 INVISIBLE_DM_PDGS = (51, 52, 53, 56, 57, 58)
 
 
-def resolve_delphes_card(spec):
+# Branches the analysis reads; --slim-delphes drops all other TreeWriter outputs (generator
+# particles, tracks, towers, energy-flow objects, fat jets), which make up most of the file.
+SLIM_BRANCHES = ("Jet", "Electron", "Muon", "Photon", "MissingET", "ScalarHT", "GenJet", "GenMissingET")
+
+
+def resolve_delphes_card(spec, slim=False):
     """'CMS' -> MG5's delphes_card_CMS.dat; any other value is a file path.
-    Returns a copy in WORK_DIR with the DM PDGs made invisible."""
+    Returns a copy in WORK_DIR with the DM PDGs made invisible and, with slim, only the
+    SLIM_BRANCHES written out."""
     if os.path.isfile(spec):
         src = os.path.abspath(spec)
     else:
@@ -398,16 +410,37 @@ def resolve_delphes_card(spec):
         src = os.path.join(mg5_root, "Template", "Common", "Cards", f"delphes_card_{spec}.dat")
         if not os.path.isfile(src):
             sys.exit(f"Error: Delphes card '{spec}' not found (looked for a file and for {src}).")
-    return make_dm_invisible(src)
-
-
-def make_dm_invisible(src):
-    """Write <WORK_DIR>/<card>_invisDM.dat: zero calorimeter response for the DM PDGs
-    (next to the existing neutralino entry) and add them to NeutrinoFilter, which keeps
-    invisibles out of the generator-level jets."""
     with open(src) as f:
-        text = f.read()
-    pdgs = [p for p in INVISIBLE_DM_PDGS if not re.search(rf"EnergyFraction\s*\{{{p}\}}", text)]
+        text = make_dm_invisible(f.read(), src)
+    suffix = "_invisDM"
+    if slim:
+        text = slim_tree_writer(text, src)
+        suffix += "_slim"
+    base = os.path.splitext(os.path.basename(src))[0]
+    dest = os.path.join(WORK_DIR, f"{base}{suffix}.dat")
+    with open(dest, "w") as f:
+        f.write(text)
+    return dest
+
+
+def slim_tree_writer(text, src):
+    """Comment out the TreeWriter branches not in SLIM_BRANCHES."""
+    def slim(m):
+        out = []
+        for line in m.group(0).split("\n"):
+            b = re.match(r"\s*add Branch\s+\S+\s+(\S+)\s+\S+", line)
+            out.append(f"# (slim) {line.strip()}" if b and b.group(1) not in SLIM_BRANCHES else line)
+        return "\n".join(out)
+    text, n = re.subn(r"module TreeWriter \S+ \{.*?\n\}", slim, text, flags=re.S)
+    if n == 0:
+        sys.exit(f"Error: no TreeWriter module in {src}; cannot slim the Delphes output.")
+    return text
+
+
+def make_dm_invisible(text, src):
+    """Zero calorimeter response for the DM PDGs (next to the existing neutralino entry)
+    and add them to NeutrinoFilter, which keeps invisibles out of the generator-level jets."""
+    pdgs =[p for p in INVISIBLE_DM_PDGS if not re.search(rf"EnergyFraction\s*\{{{p}\}}", text)]
 
     def add_fractions(m):
         indent = m.group(1)
@@ -425,12 +458,7 @@ def make_dm_invisible(src):
             block = block[:last.end()] + extra + block[last.end():]
         return block
     text = re.sub(r"module PdgCodeFilter NeutrinoFilter \{.*?\n\}", add_filter, text, flags=re.S)
-
-    base = os.path.splitext(os.path.basename(src))[0]
-    dest = os.path.join(WORK_DIR, f"{base}_invisDM.dat")
-    with open(dest, "w") as f:
-        f.write(text)
-    return dest
+    return text
 
 
 NB_CORE = 0   # cores per MadGraph instance with --jobs > 1 (0: MadGraph default, all cores)
@@ -444,7 +472,10 @@ def launch_header(run_name, process_dir, dir_exists):
     launch = cores + (f"launch {process_dir} --name={run_name}\n" if dir_exists
                       else f"launch --name={run_name}\n")
     card = f"{DELPHES_CARD}\n" if DELPHES_CARD else ""
-    return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=ExRoot\n" + card
+    # analysis=OFF: the ExRoot LHE->ROOT copy is not needed (Delphes writes its own ROOT file)
+    # and, for large runs, MadGraph's create_root_file races with its background gzip of the
+    # LHE file and deletes both copies ("No event file corresponding to <run> run").
+    return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=OFF\n" + card
 
 
 def render_template(name, values):
@@ -482,15 +513,28 @@ def hdma_settings(mA, ma, nevents, seed):
         NEVENTS=nevents, ISEED=seed, MCA=mA, MSA=ma))
 
 
-def background_settings(nevents, seed):
-    return render_template("background.madevent", dict(NEVENTS=nevents, ISEED=seed))
+def background_settings(bkg, nevents, seed, cuts):
+    """Shared background settings; with cuts, genScripts/<bkg>.cuts.madevent (generator-level
+    cuts, 'set run_card ...' lines) is inserted before the final 'done'."""
+    text = render_template("background.madevent", dict(NEVENTS=nevents, ISEED=seed))
+    if cuts:
+        cut_card = f"{bkg}.cuts.madevent"
+        if not os.path.isfile(os.path.join(TEMPLATE_DIR, cut_card)):
+            sys.exit(f"Error: --bkg-cuts needs {os.path.join(TEMPLATE_DIR, cut_card)}")
+        lines = [l for l in render_template(cut_card, {}).splitlines()
+                 if l.strip() and not l.strip().startswith("#") and l.strip() != "done"]
+        text = re.sub(r"^done\s*$", "\n".join(lines) + "\ndone", text, count=1, flags=re.M)
+    return text
 
 
-def reset_param_card(process_dir):
+def reset_cards(process_dir):
+    """Restore param_card and run_card from MadGraph's defaults before a relaunch, so
+    settings of an earlier launch (masses, generator cuts) cannot carry over."""
     cards = os.path.join(WORK_DIR, process_dir, "Cards")
-    default, active = os.path.join(cards, "param_card_default.dat"), os.path.join(cards, "param_card.dat")
-    if os.path.exists(default):
-        shutil.copy2(default, active)
+    for name in ("param_card", "run_card"):
+        default, active = os.path.join(cards, f"{name}_default.dat"), os.path.join(cards, f"{name}.dat")
+        if os.path.exists(default):
+            shutil.copy2(default, active)
 
 
 # ------------------------------------------------------------------ run one point
@@ -564,7 +608,7 @@ def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, des
         for k in range(nruns):
             rn = run_name if nruns == 1 else f"{run_name}_r{k + 1}"
             if (k > 0 or dir_exists) and not args.dry_run:
-                reset_param_card(process_dir)
+                reset_cards(process_dir)
             text = proc_card if (k == 0 and not dir_exists) else ""
             text += launch_header(rn, process_dir, True) + make_settings(seed + 1000 * k)
             card_path = os.path.join(CARD_DIR, f"point_{tag}_{rn}.txt")
@@ -645,7 +689,9 @@ def record_xsec(args, tag, key, xs):
                           f"lambda = {args.lam} (same layout as signal_cross_sections.yaml). Units: pb.\n"
                           "# Keys: mMED (as mA), then mDM (as ma).")
         else:
-            path = os.path.join(_REPO_DIR, "config", "background_cross_sections.yaml")
+            # With generator cuts these are the cross-sections after the cuts: separate file.
+            name = "background_cuts_cross_sections.yaml" if args.bkg_cuts else "background_cross_sections.yaml"
+            path = os.path.join(_REPO_DIR, "config", name)
             import yaml
             data = {}
             if os.path.exists(path):
@@ -748,7 +794,8 @@ def signal_tasks(args):
 
 
 def background_task(bkg, args):
-    return dict(tag=bkg, name=f"{bkg}_run", make_settings=lambda s: background_settings(args.nevents, s),
+    return dict(tag=bkg, name=f"{bkg}_run",
+                make_settings=lambda s: background_settings(bkg, args.nevents, s, args.bkg_cuts),
                 seed=args.seed, dest_file=f"{bkg}_delphes_events.root", xs_key=bkg)
 
 
@@ -803,6 +850,8 @@ def main():
                    help="runs per background, merged with hadd (default: --nruns)")
     p.add_argument("--jobs", type=int, default=1,
                    help="samples generated at the same time; the CPU cores are split between them")
+    p.add_argument("--cores", type=int, default=0,
+                   help="total CPU cores to use, split between the --jobs samples (default: all)")
     p.add_argument("--mA", type=int, default=500, help="2HDM+a heavy pseudoscalar mass (single)")
     p.add_argument("--ma", type=int, default=100, help="2HDM+a light pseudoscalar mass (single)")
     p.add_argument("--nevents", type=int, default=10000)
@@ -819,6 +868,12 @@ def main():
                         "(ATLAS, CMS_PhaseII, ...) or a path to a .dat file")
     p.add_argument("--keep-events", action="store_true", help="keep MG5 Events/<run> dirs (large)")
     p.add_argument("--force", action="store_true", help="regenerate even if output ROOT exists")
+    p.add_argument("--slim-delphes", action="store_true",
+                   help="write only the Delphes branches the analysis reads (much smaller files)")
+    p.add_argument("--bkg-cuts", action="store_true",
+                   help="apply the generator-level cuts in genScripts/<bkg>.cuts.madevent; output goes to "
+                        "<data-dir>/DelphesBackground_bkgcuts, cross-sections to "
+                        "config/background_cuts_cross_sections.yaml")
     p.add_argument("--dry-run", action="store_true", help="write and print cards, do not run MG5")
     args = p.parse_args()
     global WORK_DIR, CARD_DIR, LOG_DIR
@@ -827,7 +882,8 @@ def main():
     CARD_DIR = os.path.join(WORK_DIR, "textFiles")
     LOG_DIR = os.path.join(WORK_DIR, "logFiles")
     args.signal_outdir = os.path.abspath(args.signal_outdir or os.path.join(data_dir, "DelphesSignal"))
-    args.background_outdir = os.path.abspath(args.background_outdir or os.path.join(data_dir, "DelphesBackground"))
+    bkg_default = "DelphesBackground_bkgcuts" if args.bkg_cuts else "DelphesBackground"
+    args.background_outdir = os.path.abspath(args.background_outdir or os.path.join(data_dir, bkg_default))
     print(f"[env] work dir: {WORK_DIR}", flush=True)
     print(f"[env] output  : {args.signal_outdir} , {args.background_outdir}", flush=True)
     args.outdir_for = lambda tag: args.background_outdir if tag in BACKGROUNDS else args.signal_outdir
@@ -848,7 +904,7 @@ def main():
         check_environment()
         ensure_tools()
         global DELPHES_CARD
-        DELPHES_CARD = resolve_delphes_card(args.delphes_card)
+        DELPHES_CARD = resolve_delphes_card(args.delphes_card, slim=args.slim_delphes)
         print(f"[env] Delphes card: {DELPHES_CARD}", flush=True)
     else:
         print("[dry-run] skipping MadGraph install check", flush=True)
@@ -880,9 +936,10 @@ def main():
         slots[base] = [base] + [f"{base}_j{i}" for i in range(1, n)]
 
     global NB_CORE
-    if args.jobs > 1:
-        NB_CORE = max(1, (os.cpu_count() or 1) // args.jobs)
-        print(f"[env] {args.jobs} samples at a time, {NB_CORE} cores each", flush=True)
+    if args.jobs > 1 or args.cores:
+        total = args.cores or (os.cpu_count() or 1)
+        NB_CORE = max(1, total // args.jobs)
+        print(f"[env] {args.jobs} sample(s) at a time, {NB_CORE} core(s) each ({total} in total)", flush=True)
 
     failed = []
     if not args.dry_run:

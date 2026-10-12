@@ -1,0 +1,5 @@
+# Generator-level cuts for dyjets, used with --bkg-cuts (inserted into background.madevent).
+# Must stay looser than the signal regions (MET > 250 GeV, leading jet pT > 100 GeV).
+# Z -> l l enters the signal regions only when both leptons are lost; the MET is then about
+# the dilepton pT.
+set run_card ptllmin 150

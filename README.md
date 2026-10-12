@@ -26,6 +26,9 @@ failure. Main options:
 | `--nevents N` | events per run | `10000` |
 | `--sig-nruns`, `--bkg-nruns` | runs per sample (different seeds), merged with `hadd` | `1` |
 | `--jobs N` | samples generated at the same time; the CPU cores are split between them | `4` |
+| `--cores N` | total CPU cores for generation, split between the jobs | all |
+| `--slim-delphes` | write only the Delphes branches the analysis reads (about 40× smaller files) | off |
+| `--bkg-cuts` | generator-level background cuts (`genevents/genScripts/<bkg>.cuts.madevent`); backgrounds go to `<data-dir>/DelphesBackground_bkgcuts`, cross-sections to `config/background_cuts_cross_sections.yaml` | off |
 | `--data-dir D` | base dir for large files (see below) | `genevents` |
 | `--work-dir D` | MadGraph process dirs, cards and logs | `<data-dir>/work` |
 | `--signal-dir`, `--background-dir` | where the Delphes ROOT files are written and read | `<data-dir>/DelphesSignal`, `<data-dir>/DelphesBackground` |
@@ -63,6 +66,26 @@ Generation writes a lot of data (MadGraph process dirs, about 90 MB of Delphes o
 
 Without `--data-dir` everything goes under `genevents/` in the repo. Use the same `--data-dir`
 for `--skip-gen` runs so the analysis reads the files that were generated.
+
+### Slim Delphes output and background generator cuts
+
+`--slim-delphes` keeps only jets, electrons, muons, photons, MET, scalar HT and the generator-level
+jets and MET in the Delphes output (the CMS card otherwise also writes all generator particles,
+tracks, towers and energy-flow objects): about 2 KB instead of 80 KB per event.
+
+`--bkg-cuts` applies generator-level cuts to the backgrounds so the generated events populate the
+high-MET signal regions instead of the bulk of the inclusive cross-section. The cuts are in one card
+per background, `genevents/genScripts/<bkg>.cuts.madevent` (e.g. `misset 150` for Z(νν)+jets,
+`ptheavy 100` for ttbar), and are chosen looser than the signal regions; compare with a run without
+`--bkg-cuts` to check that they remove no signal-region background. Samples generated with and
+without the cuts are kept in separate directories and cross-section files.
+
+Example, 1M events per sample in 10 runs of 100k, 10 samples at a time on 20 cores:
+
+```bash
+./run_all.sh --nevents 100000 --sig-nruns 10 --bkg-nruns 10 --jobs 10 --cores 20 \
+    --slim-delphes --bkg-cuts --data-dir /home/ptiwari/data_2/DelphesAnalysisFiles
+```
 
 ### Parallel generation
 
