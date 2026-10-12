@@ -1,11 +1,54 @@
 # bbMET Analysis Pipeline
 
-Complete end-to-end analysis pipeline for bbMET (2HDM+a) signal search using Delphes ROOT files.
+End-to-end pipeline for a bbMET dark-matter search: event generation (MadGraph5 + Pythia8 +
+Delphes) for a t-channel DM or 2HDM+a signal and the SM backgrounds, then region-based analysis,
+plots, datacards, sensitivity and (optionally) Combine limits.
+
+## Run Everything With One Command
+
+```bash
+./run_all.sh --nevents 1000          # quick test: 3 signal points + all backgrounds
+./run_all.sh                         # same with 10000 events per run
+```
+
+`run_all.sh` does, in order: environment setup, signal and background generation, the analysis,
+sensitivity, the significance plot and (with `--limits`) Combine limits. It stops at the first
+failure. Main options:
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--signal-model` | `tchannel` or `2hdma` (type II) | `tchannel` |
+| `--dm-type`, `--lam` | t-channel only: `s3m`/`s3d` and coupling, fixed per call | `s3m`, `1.0` |
+| `--npoints N` | first N built-in signal points (up to 8) | `3` |
+| `--points A:a,A:a` | explicit points (`mMED:mDM` or `mA:ma`), overrides `--npoints` | |
+| `--mode grid` | full mass grid instead of `--npoints` | |
+| `--nevents N` | events per run | `10000` |
+| `--sig-nruns`, `--bkg-nruns` | runs per sample (different seeds), merged with `hadd` | `1` |
+| `--signal-dir`, `--background-dir` | where the Delphes ROOT files are written and read | `genevents/DelphesSignal`, `genevents/DelphesBackground` |
+| `--skip-gen` | reuse existing ROOT files | |
+| `--limits` | also run Combine limits (needs `combine`) | |
+
+`./run_all.sh --help` lists all options. Generation details are in `genevents/README.md`.
+
+### Environment
+
+`source setup.sh` creates the conda env `delphesanalysis` from `environment.yml` if it does not
+exist, and activates it. `run_all.sh` calls it for you. The environment pins python 3.11,
+gfortran/gxx 13 and ROOT 6.32: MadGraph 3.5.6 generates Fortran that fails at run time with the
+gfortran >= 14 runtime.
 
 ## Directory Structure
 
 ```
 DephesAnalysis/
+├── run_all.sh              # One-command pipeline (setup, generation, analysis, sensitivity, plots)
+├── setup.sh                # Create/activate the conda env
+├── environment.yml         # Conda environment (python, compilers, ROOT, analysis libraries)
+├── genevents/              # Self-contained event generation (see genevents/README.md)
+│   ├── mg5_Generate_Run_bbMET.py   # MadGraph + Pythia8 + Delphes driver
+│   ├── genScripts/                 # Editable process (.mg5) and settings (.madevent) cards
+│   ├── ufo_model/                  # t-channel DM and 2HDM+a type II UFO models
+│   └── condorJob/                  # Legacy Condor workflow
 ├── src/                    # Core analysis modules
 │   ├── bbdmDelphes.py     # Physics object definitions, event selection, observables
 │   ├── regions.py         # Region definitions and selection logic
@@ -20,7 +63,8 @@ DephesAnalysis/
 ├── config/                 # Configuration files
 │   ├── samples_config.yaml  # Background file paths only
 │   ├── background_cross_sections.yaml  # Background cross-sections (single source of truth)
-│   ├── signal_cross_sections.yaml  # Signal cross-sections
+│   ├── signal_cross_sections.yaml  # 2HDM+a signal cross-sections (mA, ma)
+│   ├── tchannel_signal_cross_sections.yaml  # t-channel signal cross-sections (mMED as mA, mDM as ma)
 │   └── cuts_config.yaml   # Physics cuts and region definitions
 ├── docs/                   # Documentation
 │   ├── README.md          # This file
@@ -66,7 +110,11 @@ This will:
 If you have signal and background files in directories with standard naming:
 
 **Signal files**: `DelphesSignal/sig_bbdm_mA{mA}_ma{ma}_delphes_events.root`
+(for the t-channel model, `mA` is the mediator mass and `ma` the DM mass)
 **Background files**: `DelphesBackground/{bgname}_delphes_events.root`
+
+Event generation writes exactly these names. Pass `--signal-xsec config/tchannel_signal_cross_sections.yaml`
+to the analysis for t-channel signals (`run_all.sh` does this for you).
 
 ```bash
 python scripts/run_analysis_from_dirs.py \
@@ -218,7 +266,10 @@ python scripts/run_combine_limits.py \
 
 - **`config/samples_config.yaml`**: Background ROOT file paths only
 - **`config/background_cross_sections.yaml`**: Background cross-sections (single source of truth)
-- **`config/signal_cross_sections.yaml`**: Signal cross-sections for all (mA, ma) points
+- **`config/signal_cross_sections.yaml`**: 2HDM+a signal cross-sections for all (mA, ma) points
+- **`config/tchannel_signal_cross_sections.yaml`**: t-channel signal cross-sections, same layout (mMED, mDM)
+
+The generator updates the three cross-section files from the MadGraph runs (mean over runs).
 - **`config/cuts_config.yaml`**: Physics cuts and region definitions
 
 ### Editing Configuration

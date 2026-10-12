@@ -1,5 +1,8 @@
 # Complete Analysis Workflow: Signal + Background → Sensitivity → Limits
 
+> To produce the input files and run steps 1-3 in one go, use `./run_all.sh` (see the top-level
+> `README.md`); event generation is described in `genevents/README.md`.
+
 This guide provides a complete end-to-end workflow for running the bbMET analysis, calculating sensitivity, and extracting limits using CMS Combine.
 
 ## Overview
@@ -240,7 +243,7 @@ python run_combine_limits.py --output-dir output
 ```bash
 # Example: ma=50 signal point
 python process_regions.py \
-    --signal-file /Users/ptiwari/Development/EventGen/MG5_aMC_v3_6_6/bbdm_2hdma_type1_case1/Events/sig_bbdm_delphes_events.root \
+    --signal-file genevents/DelphesSignal/sig_bbdm_mA300_ma50_delphes_events.root \
     --signal-xs 1.0 \
     --signal-ngen 100000 \
     --lumi 290.0 \

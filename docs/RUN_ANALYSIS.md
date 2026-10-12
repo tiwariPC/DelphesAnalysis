@@ -1,5 +1,15 @@
 # Running the Analysis
 
+## Quick Start: Everything in One Command
+
+```bash
+./run_all.sh --nevents 1000
+```
+
+Generates 3 signal points and all backgrounds, then runs the analysis, sensitivity and significance
+plot (options: `./run_all.sh --help`; generation: `genevents/README.md`). The sections below run the
+analysis alone, on files that already exist.
+
 This guide provides quick reference commands for running the bbMET analysis.
 
 ## Quick Start: Automatic Discovery from Directories

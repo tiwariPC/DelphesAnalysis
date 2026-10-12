@@ -140,3 +140,27 @@ python scripts/run_analysis_from_dirs.py \
     --cuts-config config/my_cuts.yaml \
     --output-dir output
 ```
+
+## Generating the Input Files
+
+`genevents/mg5_Generate_Run_bbMET.py` writes exactly the names this script expects, into
+`genevents/DelphesSignal/` and `genevents/DelphesBackground/` (see `genevents/README.md`):
+
+```bash
+python genevents/mg5_Generate_Run_bbMET.py --proc signal --npoints 3
+python genevents/mg5_Generate_Run_bbMET.py --proc bkg
+```
+
+For the t-channel DM model the signal file name uses `mA` = mediator mass and `ma` = DM mass, and the
+cross-sections are in `config/tchannel_signal_cross_sections.yaml`:
+
+```bash
+python scripts/run_analysis_from_dirs.py \
+    --signal-dir genevents/DelphesSignal \
+    --background-dir genevents/DelphesBackground \
+    --signal-xsec config/tchannel_signal_cross_sections.yaml \
+    --output-dir output
+```
+
+Use one DM type (`s3m` or `s3d`) and one coupling per signal directory, because neither is in the
+file name.

@@ -8,7 +8,8 @@ The configuration is split into logical files to avoid duplication:
 
 1. **File paths** → `samples_config.yaml`
 2. **Background cross-sections** → `background_cross_sections.yaml`
-3. **Signal cross-sections** → `signal_cross_sections.yaml`
+3. **Signal cross-sections** → `signal_cross_sections.yaml` (2HDM+a) and
+   `tchannel_signal_cross_sections.yaml` (t-channel DM)
 4. **Cuts and regions** → `cuts_config.yaml`
 
 ## Configuration Files
@@ -66,6 +67,17 @@ signals:
 
 **Format**: Hierarchical structure by mA (mass A) and ma (mass a) values.
 **Units**: picobarns (pb)
+
+### 3b. `config/tchannel_signal_cross_sections.yaml`
+
+**Purpose**: Cross-sections for the t-channel DM signal, in the same layout as
+`signal_cross_sections.yaml` with the mediator mass `mMED` in the `mA` slot and the DM mass `mDM` in
+the `ma` slot (matching the signal file names). Select it with
+`--signal-xsec config/tchannel_signal_cross_sections.yaml`. It is written by the event generator;
+keep one DM type and one coupling per file.
+
+The generator (`genevents/mg5_Generate_Run_bbMET.py`) also updates `signal_cross_sections.yaml` and
+`background_cross_sections.yaml` with the cross-section of each run (mean over runs).
 
 ### 4. `config/cuts_config.yaml`
 

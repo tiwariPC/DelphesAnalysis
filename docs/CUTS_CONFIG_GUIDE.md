@@ -1,5 +1,9 @@
 # Cuts Configuration Guide
 
+> The examples below use `run_analysis.py` from an earlier version. In the current pipeline pass
+> the same option to `scripts/run_analysis_from_dirs.py` or `scripts/process_regions.py`, e.g.
+> `--cuts-config my_cuts.yaml`.
+
 ## Overview
 
 The analysis pipeline now supports YAML-based cut configuration, making it easy to modify selection cuts without changing code. You can:

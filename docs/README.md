@@ -1,5 +1,11 @@
 # bbMET Analysis Pipeline
 
+> **Current workflow:** see the top-level `README.md` and `QUICKSTART.md`: `./run_all.sh` generates
+> the samples (MadGraph + Pythia8 + Delphes) and runs the whole analysis. The standalone scripts
+> mentioned below (`run_analysis.py`, `process_backgrounds.py`, `example_workflow.py`,
+> `test_setup.py`) are from an earlier version and are not in this repository; use
+> `scripts/run_analysis_from_dirs.py` and `scripts/process_regions.py` instead.
+
 Complete end-to-end bbMET analysis pipeline for 2HDM+a model, starting from Delphes ROOT files and producing Combine-ready datacards.
 
 ## Philosophy
