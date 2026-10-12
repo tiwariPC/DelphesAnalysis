@@ -2,16 +2,48 @@
 """Self-contained MadGraph5 + Pythia8 + Delphes generation for bbMET.
 
 Cards live in genScripts/ (<name>.mg5 process, <name>.madevent settings); MadGraph is
-installed into this directory on first use. Delphes ROOT files go to DelphesSignal/ and
-DelphesBackground/ (inputs of run_analysis_from_dirs.py).
+installed into this directory on first use.
 
-  python mg5_Generate_Run_bbMET.py --proc signal --mode single --mMED 1000 --mDM 100 --lam 2.0
-  python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --mA 500 --ma 100
-  python mg5_Generate_Run_bbMET.py --proc bkg --background-outdir DIR --delphes-card CMS
-  python mg5_Generate_Run_bbMET.py --proc all --mode grid     # add --dry-run to only print cards
+Output files (inputs of run_analysis_from_dirs.py), one merged file per sample:
+  signal      <signal-outdir>/sig_bbdm_mA{A}_ma{a}_delphes_events.root
+              A, a = mA, ma (2hdma) or mMED, mDM (tchannel)
+  background  <background-outdir>/<name>_delphes_events.root
+
+Usage: python mg5_Generate_Run_bbMET.py [options]
+  --proc P              signal | bkg | all | comma list of backgrounds (default signal)
+  --signal-model M      tchannel (S3M/S3D) | 2hdma (type II)     (default tchannel)
+  --dm-type T           t-channel only: s3m | s3d, one per call  (default s3m)
+  --lam L               t-channel coupling DMS3D 3 3, fixed per call (default 1.0)
+  --points A:a,A:a,...  explicit points (mMED:mDM or mA:ma)
+  --npoints N           first N built-in default points (up to 8)
+  --mode single|grid    no --points/--npoints: one point, or the full grid
+  --mMED/--mDM          t-channel point for single mode          (1000, 100)
+  --mA/--ma             2HDM+a point for single mode             (500, 100)
+  --nevents N           events per run                           (default 10000)
+  --nruns N             runs per sample, other seeds, merged with hadd (default 1)
+  --seed S              base iseed; point index and run number are added (default 1000)
+  --signal-outdir D     (default genevents/DelphesSignal)
+  --background-outdir D (default genevents/DelphesBackground)
+  --delphes-card C      CMS (default), another MG5 card suffix, or a .dat path
+  --keep-events         keep MadGraph Events/<run> directories
+  --force               regenerate even if the output ROOT file exists
+  --dry-run             print the cards only, do not run MadGraph
+
+Examples:
+  # t-channel DM signal
+  python mg5_Generate_Run_bbMET.py --proc signal --signal-model tchannel --npoints 3
+  python mg5_Generate_Run_bbMET.py --proc signal --signal-model tchannel --dm-type s3d --points 1000:100,1500:500
+
+  # 2HDM+a signal
+  python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --npoints 3
+  python mg5_Generate_Run_bbMET.py --proc signal --signal-model 2hdma --mA 500 --ma 100 --nruns 3
+
+  # backgrounds, 3 merged runs each, into a chosen directory
+  python mg5_Generate_Run_bbMET.py --proc bkg --nruns 3 --background-outdir DIR
+  python mg5_Generate_Run_bbMET.py --proc ttbar,znnjets --nevents 100000 --delphes-card CMS
 
 Environment: MG5_EXE, MG5_PYTHON (<= 3.12), MG5_TARBALL_URL, UFO_TCHANNEL, UFO_2HDMA.
-Cross-sections are written to config/*cross_sections.yaml.
+Cross-sections (mean over runs) go to config/{signal,tchannel_signal,background}_cross_sections.yaml.
 """
 
 import argparse
@@ -56,11 +88,16 @@ LOG_DIR = os.path.join(WORK_DIR, "logFiles")
 # t-channel scan (same as tChannelDM-mg5EventGeneration)
 T_MED_VALS = [10, 50, 100, 200, 500, 750, 1000, 1500, 2000, 2500]
 T_DM_VALS = [1, 10, 50, 100, 200, 500, 750, 1000, 1500, 2000]
-T_LAM_VALS = [1.0, 1.5, 2.0, 2.2, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
 
 # 2HDM+a scan (same as condorJob/make_joblist.py)
 H_MASS_A = [300, 500, 700, 900, 1200, 1500]
 H_MASS_a = [50, 100, 200, 300, 400, 500, 600, 800, 1000, 1200]
+
+# Default points: --npoints N takes the first N of these (mMED, mDM) / (mA, ma) pairs.
+DEFAULT_POINTS = {
+    "tchannel": [(500, 50), (1000, 100), (1500, 500), (750, 10), (2000, 200), (1000, 500), (2500, 1000), (500, 200)],
+    "2hdma": [(300, 50), (500, 100), (700, 200), (900, 300), (1200, 500), (1500, 800), (500, 50), (700, 100)],
+}
 
 # Process cards (model import, generate, output) and launch-settings cards live in
 # genScripts/ and are editable: <name>.mg5 and <name>.madevent. Placeholders
@@ -378,45 +415,76 @@ def reset_param_card(process_dir):
 _xs_lock = threading.Lock()
 
 
-def run_point(*, tag, proc_card, process_dir, settings, run_name, dest_file, xs_key, args):
-    """Generate the process dir if needed, launch one run, collect ROOT file + xsec."""
-    dest = os.path.join(args.outdir_for(tag), dest_file)
+def merge_root(files, dest):
+    """Merge Delphes ROOT files into dest with ROOT's hadd."""
+    hadd = shutil.which("hadd")
+    if hadd is None:
+        raise RuntimeError("hadd (ROOT) not found in PATH, cannot merge several runs")
+    r = subprocess.run([hadd, "-f", dest, *files], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"hadd failed: {r.stderr.strip()[-300:]}")
+
+
+def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, dest_file, xs_key, args):
+    """Run args.nruns launches of one process (different seeds), merge their Delphes ROOT
+    files into one file in the output directory and record the mean cross-section."""
+    outdir = args.outdir_for(tag)
+    dest = os.path.join(outdir, dest_file)
     if os.path.exists(dest) and not args.force:
         print(f"  [{tag}] skip {run_name}: {dest_file} exists (use --force)", flush=True)
         return
+    nruns = max(1, args.nruns)
     proc_path = os.path.join(WORK_DIR, process_dir)
     # A process dir is usable only if MadGraph finished writing it; a half-built one
     # (e.g. an earlier run died at 'output') is wiped and regenerated.
     dir_exists = os.path.isfile(os.path.join(proc_path, "SubProcesses", "proc_characteristics"))
-    if os.path.isdir(proc_path) and not dir_exists:
+    if os.path.isdir(proc_path) and not dir_exists and not args.dry_run:
         print(f"  [{tag}] removing incomplete process dir {process_dir}", flush=True)
         shutil.rmtree(proc_path)
-    if dir_exists:
-        reset_param_card(process_dir)
 
-    card_name = f"point_{tag}_{run_name}.txt"
-    card_path = os.path.join(CARD_DIR, card_name)
-    with open(card_path, "w") as f:
-        if not dir_exists:
-            f.write(proc_card)
-        f.write(launch_header(run_name, process_dir, True))
-        f.write(settings)
-    if args.dry_run:
-        print(f"--- {card_path}\n{open(card_path).read()}")
-        return
+    tmp_files, xss = [], []
+    try:
+        for k in range(nruns):
+            rn = run_name if nruns == 1 else f"{run_name}_r{k + 1}"
+            if (k > 0 or dir_exists) and not args.dry_run:
+                reset_param_card(process_dir)
+            text = proc_card if (k == 0 and not dir_exists) else ""
+            text += launch_header(rn, process_dir, True) + make_settings(seed + 1000 * k)
+            card_path = os.path.join(CARD_DIR, f"point_{tag}_{rn}.txt")
+            with open(card_path, "w") as f:
+                f.write(text)
+            if args.dry_run:
+                print(f"--- {card_path}  (run {k + 1}/{nruns})\n{text}")
+                continue
 
-    log = execute_madgraph(card_path, tag)
-    root_src = os.path.join(WORK_DIR, process_dir, "Events", run_name, "tag_1_delphes_events.root")
-    if not os.path.exists(root_src):
-        raise RuntimeError(f"no Delphes output at {root_src}")
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    shutil.copy2(root_src, dest)
-    xs = parse_cross_section(log)
-    print(f"  [{tag}] {run_name}: xsec = {xs} pb -> {dest}", flush=True)
-    if xs is not None:
-        record_xsec(args, tag, xs_key, xs)
-    if not args.keep_events:
-        shutil.rmtree(os.path.join(WORK_DIR, process_dir, "Events", run_name), ignore_errors=True)
+            log = execute_madgraph(card_path, tag)
+            src = os.path.join(WORK_DIR, process_dir, "Events", rn, "tag_1_delphes_events.root")
+            if not os.path.exists(src):
+                raise RuntimeError(f"no Delphes output at {src}")
+            os.makedirs(outdir, exist_ok=True)
+            tmp = os.path.join(outdir, f".run{k + 1}.{dest_file}")
+            shutil.copy2(src, tmp)
+            tmp_files.append(tmp)
+            xs = parse_cross_section(log)
+            if xs is not None:
+                xss.append(xs)
+            print(f"  [{tag}] {rn}: xsec = {xs} pb", flush=True)
+            if not args.keep_events:
+                shutil.rmtree(os.path.join(WORK_DIR, process_dir, "Events", rn), ignore_errors=True)
+        if args.dry_run:
+            return
+        if len(tmp_files) == 1:
+            os.replace(tmp_files[0], dest)
+        else:
+            merge_root(tmp_files, dest)
+    finally:
+        for t in tmp_files:
+            if os.path.exists(t):
+                os.remove(t)
+
+    print(f"  [{tag}] {run_name}: {nruns} run(s) -> {dest}", flush=True)
+    if xss:
+        record_xsec(args, tag, xs_key, sum(xss) / len(xss))
 
 
 # ------------------------------------------------------------------ cross-section yaml
@@ -432,11 +500,12 @@ def record_xsec(args, tag, key, xs):
                           "# Format: mA, then ma in GeV.")
         elif tag in ("S3M", "S3D"):
             path = os.path.join(_REPO_DIR, "config", "tchannel_signal_cross_sections.yaml")
-            table = _read_nested(path, tag.lower())
-            mMED, mDM, lam = key
-            table.setdefault(mMED, {}).setdefault(mDM, {})[lam] = xs
-            _write_nested(path, tag.lower(), table, "t-channel DM cross-sections. Units: pb.\n"
-                          "# Format: <s3m|s3d>: mMED: mDM: lambda: xsec. Both sections kept.", extra_top=True)
+            table = _read_nested(path, "signals")
+            mMED, mDM = key
+            table.setdefault(mMED, {})[mDM] = xs
+            _write_nested(path, "signals", table, "t-channel DM signal cross-sections (same layout as "
+                          "signal_cross_sections.yaml). Units: pb.\n# Keys: mMED (as mA), then mDM (as ma). "
+                          "One DM type / lambda set at a time.")
         else:
             path = os.path.join(_REPO_DIR, "config", "background_cross_sections.yaml")
             import yaml
@@ -459,7 +528,7 @@ def _read_nested(path, top):
     return {}
 
 
-def _write_nested(path, top, table, header, extra_top=False):
+def _write_nested(path, top, table, header):
     import yaml
     data = {}
     if os.path.exists(path):
@@ -476,24 +545,47 @@ def fmt(x):
     return str(x).replace(".", "p")
 
 
-def run_tchannel(dm, args, failed):
+def parse_points(spec):
+    """'500:50,1000:100' -> [(500, 50), (1000, 100)]"""
+    pts = []
+    for item in spec.split(","):
+        parts = item.strip().split(":")
+        if len(parts) != 2:
+            sys.exit(f"Error: bad --points entry '{item}', expected A:a (e.g. 500:100)")
+        pts.append((int(parts[0]), int(parts[1])))
+    return pts
+
+
+def select_points(args, model, single, grid):
+    """--points wins, then --npoints (first N defaults), then --mode single/grid."""
+    if args.points:
+        return parse_points(args.points)
+    if args.npoints:
+        defaults = DEFAULT_POINTS[model]
+        if args.npoints > len(defaults):
+            sys.exit(f"Error: --npoints {args.npoints} > {len(defaults)} built-in points; use --points")
+        return defaults[:args.npoints]
+    return grid if args.mode == "grid" else [single]
+
+
+def run_tchannel(args, failed):
+    dm = args.dm_type
     cfg = TCHANNEL_PROCS[dm]
     tag = dm.upper()
-    if args.mode == "single":
-        points = [(args.mMED, args.mDM, args.lam)]
-    else:
-        points = [(a, b, c) for a, b, c in itertools.product(T_MED_VALS, T_DM_VALS, T_LAM_VALS) if a > b]
-    for i, (mMED, mDM, lam) in enumerate(points, 1):
+    grid = [(a, b) for a in T_MED_VALS for b in T_DM_VALS if a > b]
+    points = select_points(args, "tchannel", (args.mMED, args.mDM), grid)
+    for i, (mMED, mDM) in enumerate(points, 1):
         if mMED <= mDM:
             raise ValueError(f"Kinematic violation: mMED ({mMED}) <= mDM ({mDM})")
-        name = f"mMed{mMED}_mDM{mDM}_lam{fmt(lam)}"
+        name = f"mMed{mMED}_mDM{mDM}_lam{fmt(args.lam)}"
         print(f"  [{tag}] point {i}/{len(points)}: {name}", flush=True)
         try:
             proc_card, process_dir = load_process_card(cfg["mg5"], dict(UFO_TCHANNEL=UFO_TCHANNEL))
             run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                      settings=tchannel_settings(dm, mMED, mDM, lam, args.nevents, args.seed + i),
-                      run_name=name, dest_file=f"sig_tchannel_{dm}_{name}_delphes_events.root",
-                      xs_key=(mMED, mDM, lam), args=args)
+                      make_settings=lambda s, a=mMED, b=mDM: tchannel_settings(dm, a, b, args.lam, args.nevents, s),
+                      seed=args.seed + i, run_name=name,
+                      dest_file=f"sig_bbdm_mA{mMED}_ma{mDM}_delphes_events.root",
+                      xs_key=(mMED, mDM), args=args)
         except Exception as e:
             print(f"  [{tag}] SKIP {name}: {e}", flush=True)
             failed.append(f"{tag}:{name}")
@@ -501,10 +593,8 @@ def run_tchannel(dm, args, failed):
 
 def run_2hdma(args, failed):
     tag = "2HDMA"
-    if args.mode == "single":
-        points = [(args.mA, args.ma)]
-    else:
-        points = [(A, a) for A in H_MASS_A for a in H_MASS_a if a < A]
+    grid = [(A, a) for A in H_MASS_A for a in H_MASS_a if a < A]
+    points = select_points(args, "2hdma", (args.mA, args.ma), grid)
     for i, (mA, ma) in enumerate(points, 1):
         if ma >= mA:
             raise ValueError(f"Kinematic violation: ma ({ma}) >= mA ({mA})")
@@ -513,8 +603,9 @@ def run_2hdma(args, failed):
         try:
             proc_card, process_dir = load_process_card(HDMA_PROC["mg5"], dict(UFO_2HDMA_T2=UFO_2HDMA))
             run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                      settings=hdma_settings(mA, ma, args.nevents, args.seed + i),
-                      run_name=name, dest_file=f"sig_bbdm_mA{mA}_ma{ma}_delphes_events.root",
+                      make_settings=lambda s, a=mA, b=ma: hdma_settings(a, b, args.nevents, s),
+                      seed=args.seed + i, run_name=name,
+                      dest_file=f"sig_bbdm_mA{mA}_ma{ma}_delphes_events.root",
                       xs_key=(mA, ma), args=args)
         except Exception as e:
             print(f"  [{tag}] SKIP {name}: {e}", flush=True)
@@ -526,9 +617,9 @@ def run_background(bkg, args, failed):
     try:
         proc_card, process_dir = load_process_card(f"{bkg}.mg5", {})
         run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                  settings=background_settings(args.nevents, args.seed),
-                  run_name=f"{bkg}_run", dest_file=f"{bkg}_delphes_events.root",
-                  xs_key=bkg, args=args)
+                  make_settings=lambda s: background_settings(args.nevents, s),
+                  seed=args.seed, run_name=f"{bkg}_run",
+                  dest_file=f"{bkg}_delphes_events.root", xs_key=bkg, args=args)
     except Exception as e:
         print(f"  [{tag}] SKIP {bkg}: {e}", flush=True)
         failed.append(f"{tag}")
@@ -541,11 +632,15 @@ def main():
                         f"({', '.join(BACKGROUNDS)})")
     p.add_argument("--mode", choices=["single", "grid"], default="single")
     p.add_argument("--signal-model", choices=["tchannel", "2hdma"], default="tchannel")
-    p.add_argument("--dm-type", choices=["s3m", "s3d", "both"], default="both",
-                   help="t-channel only: Majorana S3M, Dirac S3D, or both")
+    p.add_argument("--dm-type", choices=["s3m", "s3d"], default="s3m",
+                   help="t-channel only: Majorana S3M or Dirac S3D (one per call)")
     p.add_argument("--mMED", type=int, default=1000, help="t-channel mediator mass (single)")
     p.add_argument("--mDM", type=int, default=100, help="t-channel DM mass (single)")
-    p.add_argument("--lam", type=float, default=1.0, help="t-channel DMS3D 3 3 coupling (single)")
+    p.add_argument("--lam", type=float, default=1.0, help="t-channel DMS3D 3 3 coupling, fixed per call")
+    p.add_argument("--points", default="", help="explicit points 'A:a,A:a,...' (mMED:mDM or mA:ma); overrides --mode")
+    p.add_argument("--npoints", type=int, default=0, help="use the first N built-in default points")
+    p.add_argument("--nruns", type=int, default=1,
+                   help="runs per sample with different seeds, merged with hadd into one file")
     p.add_argument("--mA", type=int, default=500, help="2HDM+a heavy pseudoscalar mass (single)")
     p.add_argument("--ma", type=int, default=100, help="2HDM+a light pseudoscalar mass (single)")
     p.add_argument("--nevents", type=int, default=10000)
@@ -583,8 +678,7 @@ def main():
     jobs = []   # independent process dirs may run concurrently; each dir is sequential
     if do_signal:
         if args.signal_model == "tchannel":
-            for dm in (["s3m", "s3d"] if args.dm_type == "both" else [args.dm_type]):
-                jobs.append(threading.Thread(target=run_tchannel, args=(dm, args, failed), name=dm))
+            jobs.append(threading.Thread(target=run_tchannel, args=(args, failed), name=args.dm_type))
         else:
             jobs.append(threading.Thread(target=run_2hdma, args=(args, failed), name="2hdma"))
     if bkgs:
