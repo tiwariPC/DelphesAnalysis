@@ -4,6 +4,7 @@ Uses mplhep for CMS-compliant plotting following:
 https://cms-analysis.docs.cern.ch/guidelines/plotting/
 """
 
+import shutil
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for batch mode
@@ -15,12 +16,11 @@ from typing import Dict, List, Optional, Tuple
 from math import log10, floor
 from pathlib import Path
 
-# Enable LaTeX rendering for matplotlib
-# Set LaTeX rendering - matplotlib will fall back to mathtext if LaTeX is unavailable
-plt.rcParams['text.usetex'] = True  # Enable LaTeX rendering
+# Use LaTeX only when a latex binary exists; matplotlib does not fall back on its own and
+# fails at draw time. Without it, mathtext (built-in LaTeX-like rendering) is used.
+plt.rcParams['text.usetex'] = shutil.which('latex') is not None
 plt.rcParams['mathtext.default'] = 'regular'  # Use regular math text
 plt.rcParams['mathtext.fontset'] = 'stix'  # Use STIX fonts for better math rendering
-# If LaTeX fails, matplotlib will automatically use mathtext (built-in LaTeX-like rendering)
 
 # Set CMS style using mplhep
 # This automatically configures all CMS plotting standards

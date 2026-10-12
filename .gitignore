@@ -80,6 +80,8 @@ output/
 
 # Combine output
 combine_output/
+# Combine source/build (setup.sh with INSTALL_COMBINE=1)
+/combine/
 higgsCombine*.root
 
 # Test coverage
@@ -110,3 +112,6 @@ genevents/MG5_aMC_v*/
 genevents/work/
 genevents/DelphesSignal/
 genevents/DelphesBackground/
+
+# Generated list of sample files (machine-specific paths), see utils/samples_config.py
+config/samples_config.yaml

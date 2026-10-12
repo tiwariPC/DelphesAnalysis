@@ -116,8 +116,7 @@ def select_region(events: ak.Array,
                   met: Dict[str, ak.Array],
                   electrons: Optional[Dict[str, ak.Array]] = None,
                   muons: Optional[Dict[str, ak.Array]] = None,
-                  taus: Optional[Dict[str, ak.Array]] = None,
-                  additional_vars: Optional[Dict[str, Any]] = None) -> ak.Array:
+                  taus: Optional[Dict[str, ak.Array]] = None) -> ak.Array:
     """
     Apply region selection cuts.
 
@@ -126,7 +125,7 @@ def select_region(events: ak.Array,
     events : ak.Array
         Events array
     region_name : str
-        Name of region (e.g., "1b:SR", "2b:CR_Wlnu_mu")
+        Name of region (e.g., "1b:SR", "2b:SR")
     regions_config : dict
         Region configuration dictionary
     jets : dict
@@ -141,8 +140,6 @@ def select_region(events: ak.Array,
         Muon collection
     taus : dict, optional
         Tau collection (not used, kept for API compatibility)
-    additional_vars : dict, optional
-        Additional variables (MT, Recoil, Mll, etc.)
 
     Returns:
     --------
@@ -215,63 +212,6 @@ def select_region(events: ak.Array,
             dphi_met_jet = np.asarray(ak.to_numpy(dphi_met_jet))
         mask = mask & parse_cut_condition(region_cuts['DeltaPhi'], dphi_met_jet)
 
-    if 'Recoil' in region_cuts and additional_vars is not None:
-        # Try different recoil keys
-        recoil = None
-        for key in ['Recoil', 'Recoil_mu', 'Recoil_el']:
-            if key in additional_vars:
-                recoil = additional_vars[key]
-                break
-        if recoil is not None:
-            mask = mask & parse_cut_condition(region_cuts['Recoil'], recoil)
-
-    if 'MT' in region_cuts and additional_vars is not None:
-        # Try different MT keys
-        mt = None
-        for key in ['MT', 'MT_mu', 'MT_el']:
-            if key in additional_vars:
-                mt = additional_vars[key]
-                break
-        if mt is not None:
-            mask = mask & parse_cut_condition(region_cuts['MT'], mt)
-
-    if 'MllMin' in region_cuts and additional_vars is not None:
-        # Try different Mll keys
-        mll = None
-        for key in ['Mll', 'Mll_mu', 'Mll_el']:
-            if key in additional_vars:
-                mll = additional_vars[key]
-                break
-        if mll is not None:
-            # Convert to numpy for comparison
-            if isinstance(mll, ak.Array):
-                mll_np = np.asarray(ak.to_numpy(mll))
-            else:
-                mll_np = np.asarray(mll)
-            threshold = float(region_cuts['MllMin'].replace('>', ''))
-            mask = mask & ak.Array(mll_np >= threshold)
-
-    if 'MllMax' in region_cuts and additional_vars is not None:
-        # Try different Mll keys
-        mll = None
-        for key in ['Mll', 'Mll_mu', 'Mll_el']:
-            if key in additional_vars:
-                mll = additional_vars[key]
-                break
-        if mll is not None:
-            # Convert to numpy for comparison
-            if isinstance(mll, ak.Array):
-                mll_np = np.asarray(ak.to_numpy(mll))
-            else:
-                mll_np = np.asarray(mll)
-            threshold = float(region_cuts['MllMax'].replace('<', ''))
-            mask = mask & ak.Array(mll_np <= threshold)
-
-    if 'NAdditionalJets' in region_cuts:
-        # Additional jets = total jets - b-jets
-        nadditional = njets - nbjets
-        mask = mask & parse_cut_condition(region_cuts['NAdditionalJets'], nadditional)
-
     if 'Jet1Pt' in region_cuts:
         jet1_pt = ak.firsts(jets['PT'], axis=1)
         jet1_pt = ak.fill_none(jet1_pt, 0.0)
@@ -337,28 +277,6 @@ def select_region(events: ak.Array,
     return mask
 
 
-def get_region_type(region_name: str) -> str:
-    """
-    Get region type (SR or CR) from region name.
-
-    Parameters:
-    -----------
-    region_name : str
-        Region name (e.g., "1b:SR", "2b:CR_Wlnu_mu")
-
-    Returns:
-    --------
-    region_type : str
-        "SR" or "CR"
-    """
-    if ":SR" in region_name:
-        return "SR"
-    elif ":CR" in region_name:
-        return "CR"
-    else:
-        return "UNKNOWN"
-
-
 def get_region_category(region_name: str) -> str:
     """
     Get region category (1b or 2b) from region name.
@@ -366,7 +284,7 @@ def get_region_category(region_name: str) -> str:
     Parameters:
     -----------
     region_name : str
-        Region name (e.g., "1b:SR", "2b:CR_Wlnu_mu")
+        Region name (e.g., "1b:SR", "2b:SR")
 
     Returns:
     --------

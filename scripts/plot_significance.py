@@ -10,6 +10,7 @@ This script reads datacards and plots the significance for each region.
 
 import argparse
 import re
+import shutil
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for batch mode
@@ -18,10 +19,10 @@ import mplhep as hep
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Enable LaTeX rendering
-plt.rcParams['text.usetex'] = True
+# Use LaTeX only when a latex binary exists (matplotlib does not fall back on its own);
+# otherwise mathtext, its built-in LaTeX-like rendering, is used.
+plt.rcParams['text.usetex'] = shutil.which('latex') is not None
 plt.rcParams['mathtext.fontset'] = 'stix'
-# If LaTeX fails, matplotlib will automatically use mathtext (built-in LaTeX-like rendering)
 
 
 def parse_datacard(datacard_file: Path) -> Dict:
@@ -82,15 +83,26 @@ def calculate_significance(signal: float, background: float) -> float:
 
 
 def find_all_datacards(output_dir: Path) -> List[Tuple[Path, str]]:
-    """Find all datacard.txt files."""
-    plots_dir = output_dir / "plots"
+    """Find the per-region datacards written by process_regions.py.
 
-    if not plots_dir.exists():
-        return []
-
+    Current layout: <output>/datacards/<region>/datacard_mA{A}_ma{a}.txt (one per signal
+    point), labelled "<region>/mA{A}_ma{a}". Older layout <output>/plots/<region>/datacard.txt
+    is still read, labelled "<region>".
+    """
     datacards = []
-    for region_dir in plots_dir.iterdir():
-        if region_dir.is_dir():
+
+    datacards_dir = output_dir / "datacards"
+    if datacards_dir.exists():
+        for region_dir in sorted(p for p in datacards_dir.iterdir() if p.is_dir()):
+            if not region_dir.name.startswith("sr"):
+                continue  # significance is quoted for the signal regions only
+            for datacard_file in sorted(region_dir.glob("datacard_*.txt")):
+                point = datacard_file.stem[len("datacard_"):]
+                datacards.append((datacard_file, f"{region_dir.name}/{point}"))
+
+    plots_dir = output_dir / "plots"
+    if not datacards and plots_dir.exists():
+        for region_dir in sorted(p for p in plots_dir.iterdir() if p.is_dir()):
             datacard_file = region_dir / "datacard.txt"
             if datacard_file.exists():
                 datacards.append((datacard_file, region_dir.name))
@@ -124,15 +136,29 @@ def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float
         # Find signal and background rates
         process_to_rate = dict(zip(info["processes"], info["rates"]))
 
-        signal = process_to_rate.get("signal", 0.0)
-        background = sum([rate for proc, rate in process_to_rate.items() if proc != "signal"])
+        # The signal process is called "sig" (current) or "signal" (older datacards)
+        signal = process_to_rate.get("sig", process_to_rate.get("signal", 0.0))
+        background = sum([rate for proc, rate in process_to_rate.items() if proc not in ("sig", "signal")])
 
         sig = calculate_significance(signal, background)
 
-        regions.append(info["bin_name"])
+        regions.append(info.get("label") or info["bin_name"])
         significances.append(sig)
         signal_yields.append(signal)
         bg_yields.append(background)
+
+    # Combination of the signal regions per signal point (disjoint b-tag categories,
+    # so the significances add in quadrature)
+    by_point = {}
+    for region, sig, s_y, b_y in zip(regions, significances, signal_yields, bg_yields):
+        if "/" in region:
+            by_point.setdefault(region.split("/", 1)[1], []).append((sig, s_y, b_y))
+    for point, parts in sorted(by_point.items()):
+        if len(parts) > 1:
+            regions.append(f"combined/{point}")
+            significances.append(float(np.sqrt(sum(p[0] ** 2 for p in parts))))
+            signal_yields.append(sum(p[1] for p in parts))
+            bg_yields.append(sum(p[2] for p in parts))
 
     # Sort by significance (descending)
     sorted_data = sorted(zip(regions, significances, signal_yields, bg_yields),
@@ -184,10 +210,10 @@ def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float
     print("\n" + "="*70)
     print("Significance Summary")
     print("="*70)
-    print(f"{'Region':<20} {'Signal':>12} {'Background':>12} {'s/√(s+b)':>12}")
+    print(f"{'Region':<28} {'Signal':>12} {'Background':>12} {'s/√(s+b)':>12}")
     print("-"*70)
     for region, sig, s, b in zip(regions, significances, signal_yields, bg_yields):
-        print(f"{region:<20} {s:>12.2f} {b:>12.2f} {sig:>12.3f}")
+        print(f"{region:<28} {s:>12.2f} {b:>12.2f} {sig:>12.3f}")
     print("="*70)
 
 
@@ -239,7 +265,7 @@ def main():
 
     # Filter by regions if specified
     if args.regions:
-        datacards = [(dc, rn) for dc, rn in datacards if rn in args.regions]
+        datacards = [(dc, rn) for dc, rn in datacards if rn.split("/")[0] in args.regions]
         if not datacards:
             print(f"✗ No datacards found for specified regions!")
             return
@@ -253,6 +279,7 @@ def main():
         print(f"  Parsing {region_name}...")
         try:
             info = parse_datacard(datacard_file)
+            info["label"] = region_name
             datacard_infos.append(info)
         except Exception as e:
             print(f"    ✗ Error: {e}")

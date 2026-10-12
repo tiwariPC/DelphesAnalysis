@@ -1,14 +1,15 @@
 # bbMET Analysis Pipeline
 
-End-to-end pipeline for a bbMET dark-matter search: event generation (MadGraph5 + Pythia8 +
-Delphes) for a t-channel DM or 2HDM+a signal and the SM backgrounds, then region-based analysis,
-plots, datacards, sensitivity and (optionally) Combine limits.
+End-to-end pipeline for a bbMET dark-matter phenomenology study: event generation (MadGraph5 +
+Pythia8 + Delphes) for a t-channel DM or 2HDM+a signal and the SM backgrounds, then the
+signal-region analysis, plots, datacards, sensitivity and (optionally) Combine limits.
 
 ## Run Everything With One Command
 
 ```bash
-./run_all.sh --nevents 1000          # quick test: 3 signal points + all backgrounds
-./run_all.sh                         # same with 10000 events per run
+./run_all.sh --nevents 1000                                   # quick test: 3 signal points + all backgrounds
+./run_all.sh --data-dir /home/ptiwari/data/DelphesAnalysisFiles   # large files on a big disk
+./run_all.sh --skip-gen --data-dir /home/ptiwari/data/DelphesAnalysisFiles   # analysis only
 ```
 
 `run_all.sh` does, in order: environment setup, signal and background generation, the analysis,
@@ -18,29 +19,118 @@ failure. Main options:
 | Option | Meaning | Default |
 |---|---|---|
 | `--signal-model` | `tchannel` or `2hdma` (type II) | `tchannel` |
-| `--dm-type`, `--lam` | t-channel only: `s3m`/`s3d` and coupling, fixed per call | `s3m`, `1.0` |
+| `--dm-type`, `--lam` | t-channel only: `s3m`/`s3d` and coupling, fixed per call | `s3m`, `2.2` |
 | `--npoints N` | first N built-in signal points (up to 8) | `3` |
 | `--points A:a,A:a` | explicit points (`mMED:mDM` or `mA:ma`), overrides `--npoints` | |
 | `--mode grid` | full mass grid instead of `--npoints` | |
 | `--nevents N` | events per run | `10000` |
 | `--sig-nruns`, `--bkg-nruns` | runs per sample (different seeds), merged with `hadd` | `1` |
-| `--signal-dir`, `--background-dir` | where the Delphes ROOT files are written and read | `genevents/DelphesSignal`, `genevents/DelphesBackground` |
+| `--jobs N` | samples generated at the same time; the CPU cores are split between them | `4` |
+| `--data-dir D` | base dir for large files (see below) | `genevents` |
+| `--work-dir D` | MadGraph process dirs, cards and logs | `<data-dir>/work` |
+| `--signal-dir`, `--background-dir` | where the Delphes ROOT files are written and read | `<data-dir>/DelphesSignal`, `<data-dir>/DelphesBackground` |
+| `--output-dir D` | analysis output (plots, datacards, sensitivity) | `output` |
+| `--lumi L` | luminosity in fb⁻¹ | `290.0` |
 | `--skip-gen` | reuse existing ROOT files | |
+| `--force` | regenerate samples whose Delphes file already exists (otherwise they are skipped) | |
 | `--limits` | also run Combine limits (needs `combine`) | |
+| `--no-tmux` | run in the current shell instead of a tmux session | |
+| `--attach` | attach to the tmux session right after starting it | |
 
 `./run_all.sh --help` lists all options. Generation details are in `genevents/README.md`.
+
+### Running in tmux
+
+Unless it is already inside tmux (or `--no-tmux` is given), `run_all.sh` restarts itself in a
+detached tmux session named `bbmet_<timestamp>`, so a dropped SSH connection does not stop it.
+It prints the session name and the log file (`logs/run_all_<timestamp>.log`); follow it with
+`tail -f <log>` or `tmux attach -t <session>` (detach with `Ctrl-b d`). The session stays open
+after the pipeline ends so the last output can be read; close it with `tmux kill-session -t <session>`.
+
+### Where files go
+
+Generation writes a lot of data (MadGraph process dirs, about 90 MB of Delphes output per
+1000 signal events). Put it on a large disk with `--data-dir`:
+
+| What | Location |
+|---|---|
+| MadGraph process dirs, cards, logs | `<data-dir>/work/` (or `--work-dir`) |
+| Signal Delphes files | `<data-dir>/DelphesSignal/` (or `--signal-dir`) |
+| Background Delphes files | `<data-dir>/DelphesBackground/` (or `--background-dir`) |
+| MadGraph itself | always `genevents/MG5_aMC_v3_5_6/` (its config holds absolute paths) |
+| Analysis output | `output/` (or `--output-dir`) |
+| Pipeline logs | `logs/` |
+
+Without `--data-dir` everything goes under `genevents/` in the repo. Use the same `--data-dir`
+for `--skip-gen` runs so the analysis reads the files that were generated.
+
+### Parallel generation
+
+With `--jobs N`, N samples (signal points and backgrounds) are generated at the same time and each
+MadGraph instance uses cores/N cores. Signal points running at the same time use separate copies
+of the process directory (`<dir>_j1`, `<dir>_j2`, ...), which MadGraph builds from the same card
+before the runs start.
 
 ### Environment
 
 `source setup.sh` creates the conda env `delphesanalysis` from `environment.yml` if it does not
-exist, and activates it. `run_all.sh` calls it for you. The environment pins python 3.11,
-gfortran/gxx 13 and ROOT 6.32: MadGraph 3.5.6 generates Fortran that fails at run time with the
-gfortran >= 14 runtime.
+exist, and activates it (bash or zsh). `run_all.sh` calls it for you. The environment pins
+python 3.11, gfortran/gxx 13 and ROOT 6.32: MadGraph 3.5.6 generates Fortran that fails at run
+time with the gfortran >= 14 runtime.
+
+Combine (only needed for `--limits`) is built on request into the same env:
+
+```bash
+INSTALL_COMBINE=1 source setup.sh                      # latest main
+COMBINE_TAG=v10.2.1 INSTALL_COMBINE=1 source setup.sh  # or pin a release
+```
+
+The source is cloned into `combine/HiggsAnalysis/CombinedLimit` (git-ignored), built with
+CMake against the env's ROOT, and installed into `$CONDA_PREFIX`. After that, `combine`,
+`text2workspace.py` and `diffNuisances.py` are on PATH, and `import HiggsAnalysis.CombinedLimit`
+works in python whenever `delphesanalysis` is active. The build adds cmake, ninja, eigen and
+libboost-devel to the env.
+
+## Selection
+
+All cuts are in `config/cuts_config.yaml`.
+
+**Objects.** Delphes has no ID or isolation working points: the CMS Delphes card already applies
+its efficiencies and isolation to electrons, muons and photons, and taus are Delphes jets with
+`TauTag` (in place of the DeepTau working points).
+
+| Object | Selection |
+|---|---|
+| Muon | pT > 10 GeV, \|η\| < 2.4 |
+| Electron | pT > 10 GeV, \|η\| < 2.5 |
+| Photon | pT > 15 GeV, \|η\| < 2.5 |
+| Tau | TauTag jet, pT > 20 GeV, \|η\| < 2.3 |
+| Jet | pT > 30 GeV, \|η\| < 2.5, removed within ΔR < 0.4 of a selected lepton or photon |
+| b-jet | selected jet with `BTag >= 1` |
+
+**Signal regions.** This is a phenomenology study, so only signal regions are used (no control
+regions):
+
+| Cut | SR1b | SR2b |
+|---|---|---|
+| b-jets | = 1 | = 2 |
+| jets | 1–2 | 2–3 |
+| electrons + muons, taus, photons | 0 | 0 |
+| MET | > 250 GeV | > 250 GeV |
+| leading jet pT | > 100 GeV | > 100 GeV |
+| min Δφ(jet, MET) | > 0.5 | > 0.5 |
+
+The significance is quoted per signal region and for their combination per signal point. The two
+regions are disjoint (exactly 1 or exactly 2 b-tags), so the significances add in quadrature.
+
+**Delphes and the DM particle.** The generator writes a copy of the Delphes card with the model DM
+states (PDG 51, 52, 53, 56, 57, 58) made invisible; the stock card would put them in the
+calorimeters and the signal would have almost no MET (see `genevents/README.md`).
 
 ## Directory Structure
 
 ```
-DephesAnalysis/
+DelphesAnalysis/
 ├── run_all.sh              # One-command pipeline (setup, generation, analysis, sensitivity, plots)
 ├── setup.sh                # Create/activate the conda env
 ├── environment.yml         # Conda environment (python, compilers, ROOT, analysis libraries)
@@ -50,249 +140,118 @@ DephesAnalysis/
 │   ├── ufo_model/                  # t-channel DM and 2HDM+a type II UFO models
 │   └── condorJob/                  # Legacy Condor workflow
 ├── src/                    # Core analysis modules
-│   ├── bbdmDelphes.py     # Physics object definitions, event selection, observables
+│   ├── bbdmDelphes.py     # Object selection, jet cleaning, observables, datacards
 │   ├── regions.py         # Region definitions and selection logic
 │   └── plotting_utils.py  # Plotting functions with CMS styling
 ├── scripts/                # Executable analysis scripts
-│   ├── process_regions.py  # Main analysis script (process signal + backgrounds for all regions)
-│   ├── run_analysis_from_dirs.py  # Auto-discovery script for signal/background directories
-│   ├── calculate_sensitivity.py
+│   ├── process_regions.py  # Main analysis (signal + backgrounds in all signal regions)
+│   ├── run_analysis_from_dirs.py  # Finds the signal/background files and runs process_regions.py
+│   ├── calculate_sensitivity.py   # S, B, S/B and significance per region and combined
 │   ├── create_combined_datacard.py
 │   ├── plot_significance.py
 │   └── run_combine_limits.py
 ├── config/                 # Configuration files
-│   ├── samples_config.yaml  # Background file paths only
-│   ├── background_cross_sections.yaml  # Background cross-sections (single source of truth)
+│   ├── cuts_config.yaml   # Object selection and signal-region definitions
+│   ├── background_cross_sections.yaml  # Background cross-sections (written by the generator)
 │   ├── signal_cross_sections.yaml  # 2HDM+a signal cross-sections (mA, ma)
-│   ├── tchannel_signal_cross_sections.yaml  # t-channel signal cross-sections (mMED as mA, mDM as ma)
-│   └── cuts_config.yaml   # Physics cuts and region definitions
-├── docs/                   # Documentation
-│   ├── README.md          # This file
-│   └── *.md               # Additional guides
-├── utils/                  # Utility scripts
+│   ├── tchannel_{dm}_lam{L}_cross_sections.yaml  # t-channel signal cross-sections (mMED as mA, mDM as ma)
+│   └── samples_config.yaml  # Generated list of sample files (not tracked by git)
+├── utils/
+│   ├── samples_config.py  # Reads/writes config/samples_config.yaml
 │   └── analyze_root_structure.py
-└── tests/                  # Test scripts (if any)
+└── docs/                   # Additional guides
 ```
 
-## Quick Start
+## Running the Analysis Without run_all.sh
 
-### Full Analysis Workflow (One Command)
-
-Run the complete analysis from start to finish:
-
-```bash
-# Step 1: Process all regions (creates plots, datacards, and combined datacard)
-python scripts/run_analysis_from_dirs.py \
-    --signal-dir DelphesSignal \
-    --background-dir DelphesBackground \
-    --lumi 290.0 \
-    --output-dir output && \
-# Step 2: Calculate sensitivity metrics
-python scripts/calculate_sensitivity.py \
-    --output-dir output \
-    --output-file sensitivity.txt
-```
-
-**Or as a single line:**
-```bash
-python scripts/run_analysis_from_dirs.py --signal-dir DelphesSignal --background-dir DelphesBackground --lumi 290.0 --output-dir output && python scripts/calculate_sensitivity.py --output-dir output --output-file sensitivity.txt
-```
-
-This will:
-1. ✅ Discover all signal and background files
-2. ✅ Process all regions and generate plots
-3. ✅ Create individual region datacards
-4. ✅ **Automatically create combined datacard** (`output/plots/combined_datacard.txt`)
-5. ✅ Calculate sensitivity metrics (S/B, significance) for all regions
-
-### Option 1: Automatic Discovery from Directories (Recommended)
-
-If you have signal and background files in directories with standard naming:
-
-**Signal files**: `DelphesSignal/sig_bbdm_mA{mA}_ma{ma}_delphes_events.root`
-(for the t-channel model, `mA` is the mediator mass and `ma` the DM mass)
-**Background files**: `DelphesBackground/{bgname}_delphes_events.root`
-
-Event generation writes exactly these names. Pass `--signal-xsec config/tchannel_signal_cross_sections.yaml`
-to the analysis for t-channel signals (`run_all.sh` does this for you).
+### From the sample directories (recommended)
 
 ```bash
 python scripts/run_analysis_from_dirs.py \
-    --signal-dir DelphesSignal \
-    --background-dir DelphesBackground \
+    --signal-dir /path/to/DelphesSignal --signal-tag s3m_lam2p2 \
+    --background-dir /path/to/DelphesBackground \
+    --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml \
     --lumi 290.0 \
     --output-dir output
+python scripts/calculate_sensitivity.py --output-dir output --output-file output/sensitivity.txt
+python scripts/plot_significance.py --output-dir output --lumi 290.0
 ```
 
-This automatically:
-- Discovers all signal files and extracts (mA, ma) from filenames
-- Discovers all background files
-- Counts events in signal files (or use `--signal-ngen` to specify)
-- Updates `config/samples_config.yaml` with background paths
-- Runs analysis with all signals overlaid on the same plots
+File names (written by the generator):
+- **Signal, 2HDM+a**: `sig_bbdm_mA{mA}_ma{ma}_delphes_events.root`, cross-sections in
+  `config/signal_cross_sections.yaml`.
+- **Signal, t-channel**: `sig_bbdm_mA{mMED}_ma{mDM}_{dm}_lam{L}_delphes_events.root`, e.g.
+  `sig_bbdm_mA500_ma50_s3m_lam2p2_delphes_events.root` (S3M, λ = 2.2), cross-sections in
+  `config/tchannel_{dm}_lam{L}_cross_sections.yaml`. Pass the tag with `--signal-tag s3m_lam2p2`
+  so only those files are used; `run_all.sh` sets the tag and the cross-section file from
+  `--dm-type` and `--lam`.
+- **Background**: `{name}_delphes_events.root`
 
-### Option 2: Manual File Specification
+`run_analysis_from_dirs.py` finds the signal points (with `--signal-tag`, only that DM type and
+coupling; it stops if one mass point appears with two tags and no tag is given) and backgrounds,
+counts the generated events,
+rewrites `config/samples_config.yaml` with the files found, and runs `process_regions.py` with all
+signals overlaid on the same plots.
 
-#### Single Signal Point
-
-**Using cross-section from config (recommended):**
-```bash
-python scripts/process_regions.py \
-    --signal-file /path/to/signal.root \
-    --signal-mA 300 \
-    --signal-ma 50 \
-    --signal-ngen 100000 \
-    --lumi 290.0 \
-    --output-dir output
-```
-
-**Using cross-section directly:**
-```bash
-python scripts/process_regions.py \
-    --signal-file /path/to/signal.root \
-    --signal-xs 0.0002870400 \
-    --signal-ngen 100000 \
-    --lumi 290.0 \
-    --output-dir output
-```
-
-**With signal scaling for plots (e.g., scale by 10x for better visibility):**
-```bash
-python scripts/process_regions.py \
-    --signal-file /path/to/signal.root \
-    --signal-mA 300 \
-    --signal-ma 50 \
-    --signal-ngen 100000 \
-    --lumi 290.0 \
-    --signal-scale 10.0 \
-    --output-dir output
-```
-
-**Note**: `--signal-scale` only affects the plots for visualization. The original histograms and datacards remain unchanged.
-
-**Note**: When using `--signal-mA` and `--signal-ma`, cross-sections are automatically looked up from `config/signal_cross_sections.yaml`.
-
-#### Multiple Signal Points (Overlaid)
+### Specifying files by hand
 
 ```bash
 python scripts/process_regions.py \
-    --signal-file /path/to/signal_mA300_ma50.root \
-    --signal-mA 300 \
-    --signal-ma 50 \
-    --signal-ngen 100000 \
-    --signal-file /path/to/signal_mA500_ma100.root \
-    --signal-mA 500 \
-    --signal-ma 100 \
-    --signal-ngen 100000 \
-    --lumi 290.0 \
-    --output-dir output
+    --signal-file /path/to/sig_bbdm_mA500_ma50_s3m_lam2p2_delphes_events.root \
+    --signal-mA 500 --signal-ma 50 --signal-ngen 1000 \
+    --signal-file /path/to/sig_bbdm_mA1000_ma100_s3m_lam2p2_delphes_events.root \
+    --signal-mA 1000 --signal-ma 100 --signal-ngen 1000 \
+    --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml \
+    --lumi 290.0 --output-dir output
 ```
 
-**What the analysis does:**
-- Loads each ROOT file once (optimized)
-- Processes all regions (SRs and CRs)
-- Generates plots and datacards for each region
-- Overlays multiple signals on the same plots (if multiple provided)
-- Saves output to `output/plots/{region}/`
+- With `--signal-mA`/`--signal-ma` the cross-section is taken from the `--signal-xsec` file;
+  `--signal-xs` gives it directly.
+- `--signal-scale 10` scales the signal in the plots only; histograms and datacards are unchanged.
+- `--signal-xs-unit` sets every signal cross-section to 1 pb.
+- Backgrounds are read from `config/samples_config.yaml`.
 
-### 2. Calculate Sensitivity
+### Sensitivity
 
 ```bash
-python scripts/calculate_sensitivity.py \
-    --output-dir output \
-    --output-file sensitivity.txt
-```
-
-**Options:**
-- `--output-dir`: Directory containing output from `process_regions.py` (default: "output")
-- `--output-file`: Save results to file (optional, prints to stdout if not specified)
-- `--region`: Calculate for specific region only (optional)
-- `--format`: Output format - `table`, `csv`, or `json` (default: "table")
-
-**Examples:**
-```bash
-# Calculate for all regions, save to file
-python scripts/calculate_sensitivity.py --output-dir output --output-file sensitivity.txt
-
-# Calculate for specific region
+python scripts/calculate_sensitivity.py --output-dir output --output-file output/sensitivity.txt
 python scripts/calculate_sensitivity.py --output-dir output --region sr1b
-
-# Output as CSV
 python scripts/calculate_sensitivity.py --output-dir output --format csv --output-file sensitivity.csv
 ```
 
-### 3. Combined Datacards (Automatic)
+It reads the datacards in `output/datacards/sr*/` and lists signal, background, S/B and the Asimov
+significance for each region and signal point, plus `combined/<point>` (SR1b and SR2b).
+`plot_significance.py` makes the same comparison as a plot (`output/significance.pdf`, using
+s/√(s+b)).
 
-**Separate combined datacards are automatically created for each signal grid point** when running `process_regions.py`:
-```
-output/plots/combined_datacard_mA{mA}_ma{ma}.txt
-output/plots/combined_shapes_mA{mA}_ma{ma}.root
-```
+### Combined datacards and limits
 
-For example, if you process signals with (mA=300, ma=50) and (mA=500, ma=100), you'll get:
-- `output/plots/combined_datacard_mA300_ma50.txt`
-- `output/plots/combined_datacard_mA500_ma100.txt`
-- `output/plots/combined_shapes_mA300_ma50.root`
-- `output/plots/combined_shapes_mA500_ma100.root`
-
-Each combined datacard combines all regions (SRs and CRs) for that specific signal point.
-
-**Manual creation (if needed):**
-```bash
-python scripts/create_combined_datacard.py \
-    --output-dir output \
-    --output-file combined_datacard.txt
-```
-
-### 4. Run Combine Limits (Optional)
+`process_regions.py` writes one datacard per signal region and signal point,
+`output/datacards/sr1b/datacard_mA{A}_ma{a}.txt` and `output/datacards/sr2b/...`, and combines the
+two regions into `output/datacards/combined_datacard_mA{A}_ma{a}.txt` (bins `SR1`, `SR2`).
 
 ```bash
-python scripts/run_combine_limits.py \
-    --output-dir output \
-    --method AsymptoticLimits
+python scripts/run_combine_limits.py --output-dir output --method AsymptoticLimits
 ```
 
-**Note**: You need to specify which signal point's combined datacard to use, e.g.:
-```bash
-python scripts/run_combine_limits.py \
-    --output-dir output \
-    --datacard output/plots/combined_datacard_mA300_ma50.txt \
-    --method AsymptoticLimits
-```
+Note: the combined datacards still contain `shapes` lines pointing to `combined_shapes.root`, which
+the counting analysis does not produce; fix this before running Combine.
 
 ## Configuration
 
-### Configuration Files
-
-- **`config/samples_config.yaml`**: Background ROOT file paths only
-- **`config/background_cross_sections.yaml`**: Background cross-sections (single source of truth)
+- **`config/cuts_config.yaml`**: object selection and signal-region definitions (edit by hand)
+- **`config/background_cross_sections.yaml`**: background cross-sections
 - **`config/signal_cross_sections.yaml`**: 2HDM+a signal cross-sections for all (mA, ma) points
-- **`config/tchannel_signal_cross_sections.yaml`**: t-channel signal cross-sections, same layout (mMED, mDM)
+- **`config/tchannel_{dm}_lam{L}_cross_sections.yaml`**: t-channel signal cross-sections per DM type and
+  coupling (e.g. `tchannel_s3m_lam2p2_cross_sections.yaml`), same layout (mMED, mDM)
+- **`config/samples_config.yaml`**: generated list of the signal and background ROOT files
 
-The generator updates the three cross-section files from the MadGraph runs (mean over runs).
-- **`config/cuts_config.yaml`**: Physics cuts and region definitions
+The generator writes the three cross-section files from the MadGraph runs (mean over runs).
 
-### Editing Configuration
-
-**Modify physics cuts and regions:**
-```bash
-# Edit config/cuts_config.yaml
-# - Physics object cuts (jet pT, b-tag threshold, etc.)
-# - Event selection cuts
-# - Region definitions (SRs and CRs)
-```
-
-**Update background file paths:**
-```bash
-# Edit config/samples_config.yaml
-# Only file paths - cross-sections are in background_cross_sections.yaml
-```
-
-**Update cross-sections:**
-```bash
-# Edit config/background_cross_sections.yaml (for backgrounds)
-# Edit config/signal_cross_sections.yaml (for signals)
-```
+`config/samples_config.yaml` is generated and not tracked by git: the generator adds each Delphes
+file it writes, and `run_analysis_from_dirs.py` rewrites it from the `--signal-dir` and
+`--background-dir` it is given, dropping entries whose files no longer exist. To use other files,
+point those options (or `--data-dir`) at the directories that hold them.
 
 See `docs/CONFIG_FILES_GUIDE.md` for detailed configuration documentation.
 
@@ -300,20 +259,18 @@ See `docs/CONFIG_FILES_GUIDE.md` for detailed configuration documentation.
 
 ```
 output/
+├── sensitivity.txt                          # S, B, S/B, Z per region and combined
+├── significance.pdf
+├── datacards/
+│   ├── combined_datacard_mA{A}_ma{a}.txt    # SR1b + SR2b, per signal point
+│   ├── sr1b/datacard_mA{A}_ma{a}.txt
+│   └── sr2b/datacard_mA{A}_ma{a}.txt
 └── plots/
-    ├── combined_datacard_mA{mA}_ma{ma}.txt    # Combined datacard per signal point
-    ├── combined_shapes_mA{mA}_ma{ma}.root      # Combined shapes file per signal point
-    ├── sr1b/
-    │   ├── cutflow.pdf
-    │   ├── met.pdf
-    │   ├── mbb.pdf
-    │   ├── datacard_mA{mA}_ma{ma}.txt          # Datacard per signal point
-    │   └── shapes_mA{mA}_ma{ma}.root           # Shapes file per signal point
-    ├── sr2b/
-    │   └── ...
-    └── cr1b_wlnu/
-        └── ...
+    ├── sr1b/                                # cutflow, met, mbb, ptbb, ht, dphi_jet_met_min (.pdf/.png/.root)
+    └── sr2b/                                # same plus cost_star
 ```
+
+`output/plots` and `output/datacards` are cleared at the start of each analysis run.
 
 ## Requirements
 
@@ -321,6 +278,7 @@ See `environment.yml` for dependencies (`source setup.sh` creates the conda env)
 
 ## Documentation
 
+- `genevents/README.md` - Event generation
 - `docs/RUN_ANALYSIS.md` - Quick reference for running the analysis
 - `docs/AUTO_DISCOVERY_GUIDE.md` - Automatic file discovery guide
 - `docs/COMPLETE_ANALYSIS_GUIDE.md` - Full workflow guide

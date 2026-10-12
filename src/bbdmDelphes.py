@@ -55,11 +55,14 @@ def load_cuts_from_yaml(yaml_file="cuts_config.yaml"):
             config = yaml.safe_load(f)
 
         # Extract cuts from YAML structure
-        cuts = {
-            "jet_pt_min": config.get("jets", {}).get("pt_min", 30.0),
-            "jet_eta_max": config.get("jets", {}).get("eta_max", 2.4),
-            "btag_threshold": config.get("bjets", {}).get("btag_threshold", 0),
-        }
+        defaults = get_default_cuts()
+        cuts = {}
+        for obj in ("jet", "muon", "electron", "photon", "tau"):
+            section = config.get(f"{obj}s", {}) or {}
+            for key in ("pt_min", "eta_max"):
+                cuts[f"{obj}_{key}"] = section.get(key, defaults[f"{obj}_{key}"])
+        cuts["jet_clean_dr"] = (config.get("jets", {}) or {}).get("clean_dr", defaults["jet_clean_dr"])
+        cuts["btag_threshold"] = (config.get("bjets", {}) or {}).get("btag_threshold", defaults["btag_threshold"])
 
         return cuts
     except Exception as e:
@@ -79,7 +82,16 @@ def get_default_cuts():
     """
     return {
         "jet_pt_min": 30.0,
-        "jet_eta_max": 2.4,
+        "jet_eta_max": 2.5,
+        "jet_clean_dr": 0.4,
+        "muon_pt_min": 10.0,
+        "muon_eta_max": 2.4,
+        "electron_pt_min": 10.0,
+        "electron_eta_max": 2.5,
+        "photon_pt_min": 15.0,
+        "photon_eta_max": 2.5,
+        "tau_pt_min": 20.0,
+        "tau_eta_max": 2.3,
         "btag_threshold": 0,
     }
 
@@ -152,6 +164,7 @@ def load_delphes_events(root_file, tree_name="Delphes", library="ak"):
             "Jet/Jet.Eta",
             "Jet/Jet.Phi",
             "Jet/Jet.BTag",
+            "Jet/Jet.TauTag",
             "MissingET/MissingET.MET",
             "MissingET/MissingET.Phi"
         ]
@@ -171,6 +184,12 @@ def load_delphes_events(root_file, tree_name="Delphes", library="ak"):
                 "Muon/Muon.Eta",
                 "Muon/Muon.Phi",
                 "Muon/Muon.Charge"
+            ])
+        if any("Photon" in b for b in available_branches_str):
+            branches_to_load.extend([
+                "Photon/Photon.PT",
+                "Photon/Photon.Eta",
+                "Photon/Photon.Phi"
             ])
 
         try:
@@ -508,160 +527,67 @@ def build_muons(events, pt_min=10.0, eta_max=2.4):
     return selected_muons
 
 
-def calculate_mt(lepton_pt, lepton_phi, met_pt, met_phi):
+def build_photons(events, pt_min=15.0, eta_max=2.5):
     """
-    Calculate transverse mass MT = sqrt(2 * pT_l * MET * (1 - cos(Δφ))).
-
-    Parameters:
-    -----------
-    lepton_pt : array
-        Lepton pT (array of arrays, one per event)
-    lepton_phi : array
-        Lepton phi (array of arrays, one per event)
-    met_pt : array
-        MET (array of arrays, one per event)
-    met_phi : array
-        MET phi (array of arrays, one per event)
+    Build photons from Delphes events (pT > pt_min, |eta| < eta_max).
+    The Delphes card has already applied the photon efficiency and isolation.
 
     Returns:
     --------
-    mt : array
-        Transverse mass (one value per event)
+    photons : dict or None
+        Dictionary with 'PT', 'Eta', 'Phi' keys, or None if not available
     """
-    # Get leading lepton
-    lepton_pt_flat = ak.firsts(lepton_pt, axis=1)
-    lepton_phi_flat = ak.firsts(lepton_phi, axis=1)
-    met_pt_flat = ak.flatten(met_pt, axis=1)
-    met_phi_flat = ak.flatten(met_phi, axis=1)
-
-    # Fill None values
-    lepton_pt_flat = ak.fill_none(lepton_pt_flat, 0.0)
-    lepton_phi_flat = ak.fill_none(lepton_phi_flat, 0.0)
-
-    # Calculate Δφ using DeltaPhi function
-    dphi = DeltaPhi(lepton_phi_flat, met_phi_flat)
-
-    # Calculate MT
-    mt = np.sqrt(2.0 * lepton_pt_flat * met_pt_flat * (1.0 - np.cos(dphi)))
-
-    return mt
-
-
-def calculate_recoil(lepton_pt, lepton_phi, met_pt, met_phi):
-    """
-    Calculate recoil = |MET + lepton|.
-
-    Parameters:
-    -----------
-    lepton_pt : array
-        Lepton pT (array of arrays, one per event)
-    lepton_phi : array
-        Lepton phi (array of arrays, one per event)
-    met_pt : array
-        MET (array of arrays, one per event)
-    met_phi : array
-        MET phi (array of arrays, one per event)
-
-    Returns:
-    --------
-    recoil : array
-        Recoil (one value per event)
-    """
-    # Get leading lepton
-    lepton_pt_flat = ak.firsts(lepton_pt, axis=1)
-    lepton_phi_flat = ak.firsts(lepton_phi, axis=1)
-    met_pt_flat = ak.flatten(met_pt, axis=1)
-    met_phi_flat = ak.flatten(met_phi, axis=1)
-
-    # Fill None values
-    lepton_pt_flat = ak.fill_none(lepton_pt_flat, 0.0)
-    lepton_phi_flat = ak.fill_none(lepton_phi_flat, 0.0)
-
-    # Calculate vector sum
-    lepton_px = lepton_pt_flat * np.cos(lepton_phi_flat)
-    lepton_py = lepton_pt_flat * np.sin(lepton_phi_flat)
-    met_px = met_pt_flat * np.cos(met_phi_flat)
-    met_py = met_pt_flat * np.sin(met_phi_flat)
-
-    recoil = np.sqrt((lepton_px + met_px)**2 + (lepton_py + met_py)**2)
-
-    return recoil
-
-
-def calculate_mll(lepton1_pt, lepton1_eta, lepton1_phi, lepton1_charge,
-                   lepton2_pt, lepton2_eta, lepton2_phi, lepton2_charge):
-    """
-    Calculate dilepton invariant mass Mll.
-
-    Parameters:
-    -----------
-    lepton1_pt, lepton1_eta, lepton1_phi, lepton1_charge : arrays
-        First lepton 4-vector components (can be 1D or 2D arrays)
-    lepton2_pt, lepton2_eta, lepton2_phi, lepton2_charge : arrays
-        Second lepton 4-vector components (can be 1D or 2D arrays)
-
-    Returns:
-    --------
-    mll : array
-        Dilepton invariant mass (one value per event)
-    """
-    # Check if arrays are already 1D (from process_regions.py) or 2D
-    # Try to get the dimensionality
     try:
-        # Check if we can call ak.num with axis=1 (would fail for 1D)
-        _ = ak.num(lepton1_pt, axis=1)
-        # If we get here, it's 2D, so extract first element
-        l1_pt = ak.firsts(lepton1_pt, axis=1)
-        l1_eta = ak.firsts(lepton1_eta, axis=1)
-        l1_phi = ak.firsts(lepton1_phi, axis=1)
-        l2_pt = ak.pad_none(lepton2_pt, 2, axis=1)[:, 1]
-        l2_eta = ak.pad_none(lepton2_eta, 2, axis=1)[:, 1]
-        l2_phi = ak.pad_none(lepton2_phi, 2, axis=1)[:, 1]
-    except (ValueError, TypeError, AttributeError):
-        # Already 1D arrays, use directly
-        l1_pt = lepton1_pt
-        l1_eta = lepton1_eta
-        l1_phi = lepton1_phi
-        l2_pt = lepton2_pt
-        l2_eta = lepton2_eta
-        l2_phi = lepton2_phi
+        photon_pt = get_field(events, 'Photon/Photon.PT')
+        photon_eta = get_field(events, 'Photon/Photon.Eta')
+        photon_phi = get_field(events, 'Photon/Photon.Phi')
+    except (AttributeError, KeyError):
+        return None
 
-    # Fill None values
-    l1_pt = ak.fill_none(l1_pt, 0.0)
-    l1_eta = ak.fill_none(l1_eta, 0.0)
-    l1_phi = ak.fill_none(l1_phi, 0.0)
-    l2_pt = ak.fill_none(l2_pt, 0.0)
-    l2_eta = ak.fill_none(l2_eta, 0.0)
-    l2_phi = ak.fill_none(l2_phi, 0.0)
-
-    # Convert to numpy
-    l1_pt = np.asarray(ak.to_numpy(l1_pt))
-    l1_eta = np.asarray(ak.to_numpy(l1_eta))
-    l1_phi = np.asarray(ak.to_numpy(l1_phi))
-    l2_pt = np.asarray(ak.to_numpy(l2_pt))
-    l2_eta = np.asarray(ak.to_numpy(l2_eta))
-    l2_phi = np.asarray(ak.to_numpy(l2_phi))
-
-    # Calculate 4-vectors
-    l1_px = l1_pt * np.cos(l1_phi)
-    l1_py = l1_pt * np.sin(l1_phi)
-    l1_pz = l1_pt * np.sinh(l1_eta)
-    l1_e = l1_pt * np.cosh(l1_eta)
-
-    l2_px = l2_pt * np.cos(l2_phi)
-    l2_py = l2_pt * np.sin(l2_phi)
-    l2_pz = l2_pt * np.sinh(l2_eta)
-    l2_e = l2_pt * np.cosh(l2_eta)
-
-    # Calculate invariant mass
-    mll = np.sqrt(np.maximum(0, (l1_e + l2_e)**2 - (l1_px + l2_px)**2 - (l1_py + l2_py)**2 - (l1_pz + l2_pz)**2))
-
-    return mll
+    mask = (photon_pt > pt_min) & (np.abs(photon_eta) < eta_max)
+    return {'PT': photon_pt[mask], 'Eta': photon_eta[mask], 'Phi': photon_phi[mask]}
 
 
-# ============================================================================
-# 3. Observables Calculation
-# ============================================================================
+def build_taus(events, pt_min=20.0, eta_max=2.3):
+    """
+    Build hadronic taus: Delphes jets with TauTag (Delphes' tau identification, standing
+    in for the DeepTau working points), pT > pt_min and |eta| < eta_max.
+
+    Returns:
+    --------
+    taus : dict or None
+        Dictionary with 'PT', 'Eta', 'Phi' keys, or None if TauTag is not available
+    """
+    try:
+        jet_pt = get_field(events, 'Jet/Jet.PT')
+        jet_eta = get_field(events, 'Jet/Jet.Eta')
+        jet_phi = get_field(events, 'Jet/Jet.Phi')
+        jet_tautag = get_field(events, 'Jet/Jet.TauTag')
+    except (AttributeError, KeyError):
+        return None
+
+    mask = (jet_tautag > 0) & (jet_pt > pt_min) & (np.abs(jet_eta) < eta_max)
+    return {'PT': jet_pt[mask], 'Eta': jet_eta[mask], 'Phi': jet_phi[mask]}
+
+
+def clean_jets(jets, objects, dr_min=0.4):
+    """
+    Remove jets within Delta R < dr_min of any object in `objects`
+    (list of dicts with 'Eta' and 'Phi', e.g. selected electrons, muons, photons).
+    """
+    keep = jets['PT'] > -1.0  # all True, same jagged structure as the jets
+    jet_coords = ak.zip({"eta": jets['Eta'], "phi": jets['Phi']})
+    for obj in objects:
+        if obj is None:
+            continue
+        obj_coords = ak.zip({"eta": obj['Eta'], "phi": obj['Phi']})
+        pairs = ak.cartesian({"j": jet_coords, "o": obj_coords}, nested=True)
+        deta = pairs.j.eta - pairs.o.eta
+        dphi = (pairs.j.phi - pairs.o.phi + np.pi) % (2 * np.pi) - np.pi
+        near = ak.any(deta ** 2 + dphi ** 2 < dr_min ** 2, axis=2)
+        keep = keep & ~near
+    return {k: v[keep] for k, v in jets.items()}
+
 
 def calculate_observables(jets, bjets, met, mask):
     """
@@ -1018,9 +944,7 @@ def scan_mA_fixed_ma(processors_dict, mA_values, ma_fixed=300.0):
 
 def generate_datacard(signal_name, signal_rate,
                      backgrounds,  # dict of {name: rate}
-                     region_type="SR",  # "SR" or "CR"
-                     bin_name=None,  # Will be set to "SR" or "CR" if None
-                     dominant_bkg=None,  # Name of dominant background (for CR normalization)
+                     bin_name="SR",
                      observation=-1,
                      shapes_file="shapes.root"):
     """
@@ -1034,37 +958,24 @@ def generate_datacard(signal_name, signal_rate,
         Signal event rate
     backgrounds : dict
         Dictionary of {background_name: rate}
-    region_type : str
-        "SR" or "CR" (default: "SR")
     bin_name : str
-        Bin name (default: "SR" or "CR" based on region_type)
-    dominant_bkg : str
-        Name of dominant background (for CR normalization, default: highest rate)
+        Bin name (default: "SR")
     observation : int
         Observed events (-1 for Asimov)
     shapes_file : str
-        Name of shapes ROOT file (default: "shapes.root")
+        Name of shapes ROOT file (default: "shapes.root"); "" for a counting datacard
 
     Returns:
     --------
     datacard : str
         Datacard content as string
     """
-    # Set bin name if not provided
-    if bin_name is None:
-        bin_name = region_type
-
     # Build process list: signal first (process 0), then backgrounds (1, 2, 3, ...)
     bg_names = list(backgrounds.keys())
     processes = [signal_name] + bg_names
     rates = [signal_rate] + [backgrounds[b] for b in bg_names]
     n_processes = len(processes)
     n_backgrounds = len(bg_names)
-
-    # Determine dominant background if not provided (for CR)
-    if dominant_bkg is None and region_type == "CR" and bg_names:
-        # Find background with highest rate
-        dominant_bkg = max(bg_names, key=lambda x: backgrounds[x])
 
     # Build datacard
     lines = []
@@ -1075,8 +986,8 @@ def generate_datacard(signal_name, signal_rate,
 
     # Shapes line (only if shapes_file is provided)
     if shapes_file:
-    lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
-    lines.append("---------------------------------")
+        lines.append(f"shapes * {bin_name} {shapes_file} $PROCESS_{bin_name} $PROCESS_{bin_name}_$SYSTEMATIC")
+        lines.append("---------------------------------")
 
     # Bin and observation
     lines.append(f"bin           {bin_name}")
@@ -1091,88 +1002,40 @@ def generate_datacard(signal_name, signal_rate,
     lines.append("---------------------------------")
     lines.append("")
 
-    # Add uncertainties based on region type
-    if region_type == "CR":
-        # Luminosity (correlated with SR)
-        lines.append("# Luminosity (same nuisance name → correlated with SR)")
-        lines.append(f"lumi_13TeV     lnN  " + " ".join(["1.025"] * n_processes))
-        lines.append("")
+    # Luminosity uncertainty (correlated everywhere)
+    lines.append("# Luminosity uncertainty (correlated everywhere)")
+    lines.append(f"lumi_13TeV     lnN  " + " ".join(["1.025"] * n_processes))
+    lines.append("")
 
-        # Signal suppressed in CR
-        lines.append("# Signal suppressed in CR (or effectively zero)")
-        sig_unc = ["1.00"] + ["-"] * n_backgrounds
-        lines.append(f"sig_{bin_name}_rate    lnN  " + " ".join(sig_unc))
-        lines.append("")
+    # Signal theory uncertainty
+    lines.append("# Signal theory uncertainty")
+    sig_xsec_unc = ["1.10"] + ["-"] * n_backgrounds
+    lines.append(f"sig_xsec       lnN  " + " ".join(sig_xsec_unc))
+    lines.append("")
 
-        # Dominant background floats freely
-        if dominant_bkg:
-            lines.append("# Let dominant background float freely")
-            dom_bkg_unc = ["-"] * n_processes
-            dom_bkg_idx = bg_names.index(dominant_bkg) + 1  # +1 because signal is at index 0
-            dom_bkg_unc[dom_bkg_idx] = "5.00"
-            lines.append(f"norm_{dominant_bkg}_{bin_name}   lnN  " + " ".join(dom_bkg_unc))
-            lines.append("")
+    # Background normalization uncertainties
+    lines.append("# Background normalization uncertainties")
+    for bg_name in bg_names:
+        bg_unc = ["-"] * n_processes
+        bg_idx = bg_names.index(bg_name) + 1
+        # Set constraint based on background type
+        constraint = "1.30"  # Default 30% uncertainty
+        if "ttbar" in bg_name.lower() or "tt" in bg_name.lower():
+            constraint = "1.20"
+        elif "wlnjets" in bg_name.lower() or "wjets" in bg_name.lower():
+            constraint = "1.30"
+        elif "znnjets" in bg_name.lower() or "znu" in bg_name.lower():
+            constraint = "1.25"
+        elif "dyjets" in bg_name.lower() or "dy" in bg_name.lower():
+            constraint = "1.40"
+        elif "stop" in bg_name.lower():
+            constraint = "1.35"
+        bg_unc[bg_idx] = constraint
+        lines.append(f"norm_{bg_name}      lnN  " + " ".join(bg_unc))
+    lines.append("")
 
-        # Subdominant backgrounds constrained
-        lines.append("# Subdominant backgrounds constrained")
-        for bg_name in bg_names:
-            if bg_name != dominant_bkg:
-                bg_unc = ["-"] * n_processes
-                bg_idx = bg_names.index(bg_name) + 1
-                # Set constraint based on background type (can be customized)
-                constraint = "1.30"  # Default 30% uncertainty
-                if "ttbar" in bg_name.lower() or "tt" in bg_name.lower():
-                    constraint = "1.20"
-                elif "wlnjets" in bg_name.lower() or "wjets" in bg_name.lower():
-                    constraint = "1.30"
-                elif "znnjets" in bg_name.lower() or "znu" in bg_name.lower():
-                    constraint = "1.25"
-                elif "dyjets" in bg_name.lower() or "dy" in bg_name.lower():
-                    constraint = "1.40"
-                elif "stop" in bg_name.lower():
-                    constraint = "1.35"
-                bg_unc[bg_idx] = constraint
-                lines.append(f"norm_{bg_name}      lnN  " + " ".join(bg_unc))
-        lines.append("")
-
-        # Shape uncertainty
-        lines.append("# Shape uncertainty")
-        lines.append(f"jes            shape " + " ".join(["1"] * n_processes))
-
-    else:  # SR
-        # Luminosity uncertainty (correlated everywhere)
-        lines.append("# Luminosity uncertainty (correlated everywhere)")
-        lines.append(f"lumi_13TeV     lnN  " + " ".join(["1.025"] * n_processes))
-        lines.append("")
-
-        # Signal theory uncertainty
-        lines.append("# Signal theory uncertainty")
-        sig_xsec_unc = ["1.10"] + ["-"] * n_backgrounds
-        lines.append(f"sig_xsec       lnN  " + " ".join(sig_xsec_unc))
-        lines.append("")
-
-        # Background normalization uncertainties
-        lines.append("# Background normalization uncertainties")
-        for bg_name in bg_names:
-            bg_unc = ["-"] * n_processes
-            bg_idx = bg_names.index(bg_name) + 1
-            # Set constraint based on background type
-            constraint = "1.30"  # Default 30% uncertainty
-            if "ttbar" in bg_name.lower() or "tt" in bg_name.lower():
-                constraint = "1.20"
-            elif "wlnjets" in bg_name.lower() or "wjets" in bg_name.lower():
-                constraint = "1.30"
-            elif "znnjets" in bg_name.lower() or "znu" in bg_name.lower():
-                constraint = "1.25"
-            elif "dyjets" in bg_name.lower() or "dy" in bg_name.lower():
-                constraint = "1.40"
-            elif "stop" in bg_name.lower():
-                constraint = "1.35"
-            bg_unc[bg_idx] = constraint
-            lines.append(f"norm_{bg_name}      lnN  " + " ".join(bg_unc))
-        lines.append("")
-
-        # Shape uncertainty
+    # Shape uncertainty (example); a shape nuisance needs a shapes file
+    if shapes_file:
         lines.append("# Shape uncertainty (example)")
         lines.append(f"jes            shape " + " ".join(["1"] * n_processes))
 
@@ -1314,11 +1177,11 @@ def create_shapes_file(signal_hist, background_hists, bin_name, output_file,
     background_hists : dict
         Dictionary of {bg_name: {observable: hist.Hist}} for backgrounds
     bin_name : str
-        Bin name (e.g., "SR" or "CR")
+        Bin name (e.g., "SR")
     output_file : str
         Output ROOT filename (e.g., "shapes.root")
     main_observable : str
-        Main observable to use (default: "met" for SR, "recoil" for CR)
+        Main observable to use (default: "met")
 
     Returns:
     --------
@@ -1332,9 +1195,8 @@ def create_shapes_file(signal_hist, background_hists, bin_name, output_file,
         print("✗ uproot not available. Install with: pip install uproot")
         return False
 
-    # Determine main observable if not provided
     if main_observable is None:
-        main_observable = "met" if bin_name == "SR" else "recoil"
+        main_observable = "met"
 
     # Open ROOT file for writing
     try:

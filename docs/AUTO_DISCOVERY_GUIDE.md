@@ -152,13 +152,13 @@ python genevents/mg5_Generate_Run_bbMET.py --proc bkg
 ```
 
 For the t-channel DM model the signal file name uses `mA` = mediator mass and `ma` = DM mass, and the
-cross-sections are in `config/tchannel_signal_cross_sections.yaml`:
+cross-sections are in `config/tchannel_s3m_lam2p2_cross_sections.yaml`:
 
 ```bash
 python scripts/run_analysis_from_dirs.py \
     --signal-dir genevents/DelphesSignal \
     --background-dir genevents/DelphesBackground \
-    --signal-xsec config/tchannel_signal_cross_sections.yaml \
+    --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml \
     --output-dir output
 ```
 

@@ -6,7 +6,7 @@ The stacked data/MC-style plots are made by `scripts/process_regions.py` (called
 ## What is done automatically
 
 1. **Cross-sections** come from `config/background_cross_sections.yaml` (backgrounds) and
-   `config/signal_cross_sections.yaml` or `config/tchannel_signal_cross_sections.yaml` (signals).
+   `config/signal_cross_sections.yaml` or `config/tchannel_s3m_lam2p2_cross_sections.yaml` (signals).
 2. **Generated events** are counted from the ROOT files.
 3. **Stacked plots** of the observables (MET, m(bb), pT(bb), HT, Δφ(bb), Δφ(MET, bb)) are made for
    every region, with the signals overlaid.

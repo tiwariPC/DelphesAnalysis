@@ -11,30 +11,77 @@
 # Options:
 #   --signal-model M     tchannel | 2hdma (type II)           (default tchannel)
 #   --dm-type T          t-channel only: s3m | s3d            (default s3m)
-#   --lam L              t-channel coupling DMS3D 3 3         (default 1.0)
+#   --lam L              t-channel coupling DMS3D 3 3         (default 2.2)
 #   --npoints N          number of default signal points, <= 8 (default 3)
 #   --points LIST        explicit signal points A:a,A:a,...   (overrides --npoints)
 #   --mode grid          full mass grid instead of --npoints
 #   --nevents N          events per run                        (default 10000)
 #   --sig-nruns N        runs per signal point, merged         (default 1)
 #   --bkg-nruns N        runs per background, merged           (default 1)
+#   --jobs N             samples generated at the same time; CPU cores are
+#                        split between them                    (default 4)
 #   --delphes-card C     Delphes card, 'CMS' or path           (default CMS)
-#   --signal-dir D       Delphes signal ROOT dir               (default genevents/DelphesSignal)
-#   --background-dir D   Delphes background ROOT dir           (default genevents/DelphesBackground)
+#   --data-dir D         large files: MadGraph work dirs and logs, Delphes ROOT files
+#                        (default genevents)
+#   --work-dir D         MadGraph process dirs, cards and logs (default <data-dir>/work)
+#   --signal-dir D       Delphes signal ROOT dir               (default <data-dir>/DelphesSignal)
+#   --background-dir D   Delphes background ROOT dir           (default <data-dir>/DelphesBackground)
 #   --output-dir D       analysis output                       (default output)
 #   --lumi L             luminosity in fb^-1                   (default 290.0)
 #   --skip-gen           skip event generation
+#   --force              regenerate samples whose Delphes file already exists
 #   --limits             also run Combine limits (needs 'combine')
 #   --signal-xs-unit     set all signal cross-sections to 1 pb in the analysis
+#   --no-tmux            run in the current shell instead of a detached tmux session
+#   --attach             attach to the tmux session right after starting it
+#
+# Unless already inside tmux (or --no-tmux is given), the pipeline restarts itself in a
+# detached tmux session so a dropped connection does not kill it. Output goes to
+# logs/run_all_<timestamp>.log; reattach with 'tmux attach -t <session>'.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-NEVENTS=10000; MODE=points; NPOINTS=3; POINTS=""; SIGNAL_MODEL=tchannel; DM_TYPE=s3m; LAM=1.0
-SIG_NRUNS=1; BKG_NRUNS=1; DELPHES_CARD=CMS
-SIGNAL_DIR="$REPO_DIR/genevents/DelphesSignal"; BKG_DIR="$REPO_DIR/genevents/DelphesBackground"
-OUTPUT_DIR=output; LUMI=290.0; SKIP_GEN=0; LIMITS=0; XS_UNIT=0
+USE_TMUX=1; ATTACH=0; PASS_ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --no-tmux) USE_TMUX=0;;
+        --attach) ATTACH=1;;
+        -h|--help) sed -n 2,40p "$0"; exit 0;;
+        *) PASS_ARGS+=("$a");;
+    esac
+done
+set -- ${PASS_ARGS[@]+"${PASS_ARGS[@]}"}
+
+if [ "$USE_TMUX" -eq 1 ] && [ -z "${TMUX:-}" ]; then
+    if ! command -v tmux >/dev/null 2>&1; then
+        echo "tmux not found; running in the current shell (a dropped connection will stop it)." >&2
+    else
+        stamp="$(date +%Y%m%d_%H%M%S)"
+        session="bbmet_${stamp}"
+        mkdir -p "$REPO_DIR/logs"
+        log="$REPO_DIR/logs/run_all_${stamp}.log"
+        inner="cd $(printf %q "$REPO_DIR") && bash ./run_all.sh --no-tmux $(printf '%q ' "$@")"
+        tmux new-session -d -s "$session" \
+            "set -o pipefail; $inner 2>&1 | tee $(printf %q "$log"); echo \"[run_all exited with status \$?]\" | tee -a $(printf %q "$log")"
+        # Keep the window after the pipeline ends so its last output stays visible.
+        tmux set-option -t "$session" remain-on-exit on >/dev/null
+        echo "Pipeline started in tmux session: $session"
+        echo "  log      : $log"
+        echo "  follow   : tail -f $log"
+        echo "  attach   : tmux attach -t $session   (detach: Ctrl-b d)"
+        echo "  close    : tmux kill-session -t $session   (after it finishes)"
+        if [ "$ATTACH" -eq 1 ] && [ -t 1 ]; then exec tmux attach -t "$session"; fi
+        exit 0
+    fi
+fi
+
+NEVENTS=10000; MODE=points; NPOINTS=3; POINTS=""; SIGNAL_MODEL=tchannel; DM_TYPE=s3m; LAM=2.2
+SIG_NRUNS=1; BKG_NRUNS=1; DELPHES_CARD=CMS; JOBS=4
+SIGNAL_DIR=""; BKG_DIR=""; WORK_DIR=""
+DATA_DIR="$REPO_DIR/genevents"
+OUTPUT_DIR=output; LUMI=290.0; SKIP_GEN=0; LIMITS=0; XS_UNIT=0; FORCE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,23 +94,37 @@ while [ $# -gt 0 ]; do
         --lam) LAM="$2"; shift 2;;
         --sig-nruns) SIG_NRUNS="$2"; shift 2;;
         --bkg-nruns) BKG_NRUNS="$2"; shift 2;;
+        --jobs) JOBS="$2"; shift 2;;
         --delphes-card) DELPHES_CARD="$2"; shift 2;;
+        --data-dir) DATA_DIR="$2"; shift 2;;
+        --work-dir) WORK_DIR="$2"; shift 2;;
         --signal-dir) SIGNAL_DIR="$2"; shift 2;;
         --background-dir) BKG_DIR="$2"; shift 2;;
         --output-dir) OUTPUT_DIR="$2"; shift 2;;
         --lumi) LUMI="$2"; shift 2;;
         --skip-gen) SKIP_GEN=1; shift;;
+        --force) FORCE=1; shift;;
         --limits) LIMITS=1; shift;;
         --signal-xs-unit) XS_UNIT=1; shift;;
-        -h|--help) sed -n 2,28p "$0"; exit 0;;
         *) echo "Unknown option: $1" >&2; exit 1;;
     esac
 done
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+SIGNAL_DIR="${SIGNAL_DIR:-$DATA_DIR/DelphesSignal}"
+BKG_DIR="${BKG_DIR:-$DATA_DIR/DelphesBackground}"
+WORK_DIR="${WORK_DIR:-$DATA_DIR/work}"
+mkdir -p "$DATA_DIR"
+echo "Data dir: $DATA_DIR"
 
-# Cross-section table the analysis reads for the chosen signal model.
+# Cross-section table and signal file tag for the chosen signal model. t-channel files and
+# cross-sections carry the DM type and coupling (e.g. s3m_lam2p2), so samples generated
+# with other settings are never picked up.
 if [ "$SIGNAL_MODEL" = "tchannel" ]; then
-    SIGNAL_XSEC="config/tchannel_signal_cross_sections.yaml"
+    # Same formatting as the generator: str(float(L)) with '.' -> 'p' (2.2 -> 2p2, 2 -> 2p0)
+    SIGNAL_TAG="${DM_TYPE}_lam$(python3 -c 'import sys; print(str(float(sys.argv[1])).replace(".", "p"))' "$LAM")"
+    SIGNAL_XSEC="config/tchannel_${SIGNAL_TAG}_cross_sections.yaml"
 else
+    SIGNAL_TAG=""
     SIGNAL_XSEC="config/signal_cross_sections.yaml"
 fi
 
@@ -87,20 +148,20 @@ source "$REPO_DIR/setup.sh"
 set -u
 
 if [ "$SKIP_GEN" -eq 0 ]; then
-    step "2/6 generate signal ($SIGNAL_MODEL: ${POINT_ARGS[*]})"
-    python genevents/mg5_Generate_Run_bbMET.py --proc signal "${POINT_ARGS[@]}" \
+    step "2/6 generate signal ($SIGNAL_MODEL: ${POINT_ARGS[*]}) and backgrounds, $JOBS at a time"
+    python genevents/mg5_Generate_Run_bbMET.py --proc all "${POINT_ARGS[@]}" \
         --signal-model "$SIGNAL_MODEL" --dm-type "$DM_TYPE" --lam "$LAM" \
-        --delphes-card "$DELPHES_CARD" --nevents "$NEVENTS" --nruns "$SIG_NRUNS" \
-        --signal-outdir "$SIGNAL_DIR"
-    step "2/6 generate backgrounds ($BKG_NRUNS run(s) each)"
-    python genevents/mg5_Generate_Run_bbMET.py --proc bkg --delphes-card "$DELPHES_CARD" \
-        --nevents "$NEVENTS" --nruns "$BKG_NRUNS" --background-outdir "$BKG_DIR"
+        --delphes-card "$DELPHES_CARD" --nevents "$NEVENTS" \
+        --nruns "$SIG_NRUNS" --bkg-nruns "$BKG_NRUNS" --jobs "$JOBS" \
+        --data-dir "$DATA_DIR" --work-dir "$WORK_DIR" \
+        --signal-outdir "$SIGNAL_DIR" --background-outdir "$BKG_DIR" \
+        $( [ "$FORCE" -eq 1 ] && echo --force )
 else
     step "2/6 generation skipped"
 fi
 
 step "3/6 analysis (regions, plots, datacards)"
-ANALYSIS_ARGS=(--signal-dir "$SIGNAL_DIR" --background-dir "$BKG_DIR" --lumi "$LUMI"
+ANALYSIS_ARGS=(--signal-dir "$SIGNAL_DIR" --signal-tag "$SIGNAL_TAG" --background-dir "$BKG_DIR" --lumi "$LUMI"
                --output-dir "$OUTPUT_DIR" --signal-xsec "$SIGNAL_XSEC")
 if [ "$XS_UNIT" -eq 1 ]; then ANALYSIS_ARGS+=(--signal-xs-unit); fi
 python scripts/run_analysis_from_dirs.py "${ANALYSIS_ARGS[@]}"

@@ -159,46 +159,14 @@ def combine_datacards(datacard_infos: List[Dict], output_dir: Path = None) -> st
 
     # Bin names (one line listing all bins)
     # Each region becomes a separate bin
-    # If multiple regions have same bin name (SR or CR), number them (SR1, SR2, CR1, CR2, etc.)
+    # Regions with the same bin name ("SR") are numbered: SR1, SR2, ...
     bin_names = [info["bin_name"] for info in datacard_infos]
-
-    # Create numbered bin names for the declaration line
-    # Count occurrences of each bin type
-    bin_name_counts = {}
-    numbered_bin_names = []
-    for bn in bin_names:
-        if bn not in bin_name_counts:
-            bin_name_counts[bn] = 0
-        bin_name_counts[bn] += 1
-        count = bin_name_counts[bn]
-        # Number bins if there are multiple of the same type
-        if bin_name_counts[bn] == 1 and bin_name_counts.get(bn, 0) <= 1:
-            # First occurrence - check if there will be more
-            remaining = bin_names.count(bn) - 1
-            if remaining > 0:
-                numbered_bin_names.append(f"{bn}{count}")
-            else:
-                numbered_bin_names.append(bn)
-        else:
-            numbered_bin_names.append(f"{bn}{count}")
-
-    # Actually, simpler: number all bins of same type
     final_bin_names = []
-    sr_count = 1
-    cr_count = 1
+    counts = {}
     for bn in bin_names:
-        if bn == "SR":
-            if bin_names.count("SR") > 1:
-                final_bin_names.append(f"SR{sr_count}")
-                sr_count += 1
-            else:
-                final_bin_names.append("SR")
-        elif bn == "CR":
-            if bin_names.count("CR") > 1:
-                final_bin_names.append(f"CR{cr_count}")
-                cr_count += 1
-            else:
-                final_bin_names.append("CR")
+        if bin_names.count(bn) > 1:
+            counts[bn] = counts.get(bn, 0) + 1
+            final_bin_names.append(f"{bn}{counts[bn]}")
         else:
             final_bin_names.append(bn)
 
@@ -207,7 +175,7 @@ def combine_datacards(datacard_infos: List[Dict], output_dir: Path = None) -> st
         combined_shapes_file = "combined_shapes.root"
         # Build shapes line: one per numbered bin name
         # Format: shapes * bin_name shapes_file $PROCESS_base_name $PROCESS_base_name_$SYSTEMATIC
-        # Extract base names for shapes (SR1 -> SR, CR1 -> CR)
+        # Extract base names for shapes (SR1 -> SR)
         for final_bin in final_bin_names:
             base_name = final_bin.rstrip('1234567890')  # Remove trailing digits
             lines.append(f"shapes * {final_bin} {combined_shapes_file} $PROCESS_{base_name} $PROCESS_{base_name}_$SYSTEMATIC")
@@ -366,12 +334,6 @@ def main():
         default=None,
         help="Specific regions to include (default: all)"
     )
-    parser.add_argument(
-        "--sr-cr-only",
-        action="store_true",
-        help="Combine only SR and CR regions (exclude category-specific regions)"
-    )
-
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -396,22 +358,6 @@ def main():
         if not datacards:
             print(f"✗ No datacards found for specified regions!")
             return
-
-    # Filter for SR+CR only if requested
-    if args.sr_cr_only:
-        # Group by category and combine SR and CR
-        # e.g., sr1b + cr1b_wlnu, sr2b + cr2b_top
-        import re
-        sr_cr_datacards = []
-        for dc, rn in datacards:
-            # Check if it's an SR or CR region
-            if rn.startswith('sr') or rn.startswith('cr'):
-                sr_cr_datacards.append((dc, rn))
-        datacards = sr_cr_datacards
-        if not datacards:
-            print(f"✗ No SR/CR datacards found!")
-            return
-        print(f"  Filtered to {len(datacards)} SR/CR datacards")
 
     # Parse all datacards
     print("\n" + "="*70)

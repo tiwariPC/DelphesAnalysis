@@ -1,6 +1,27 @@
+# Object selection. Delphes has no ID/isolation working points (Loose ID/Iso, DeepTau):
+# the CMS Delphes card already applies its efficiencies and isolation to the Electron,
+# Muon and Photon collections, and taus are jets carrying Delphes' TauTag.
+muons:
+  pt_min: 10.0
+  eta_max: 2.4
+
+electrons:
+  pt_min: 10.0
+  eta_max: 2.5
+
+photons:
+  pt_min: 15.0
+  eta_max: 2.5
+
+taus:
+  pt_min: 20.0
+  eta_max: 2.3
+
 jets:
   pt_min: 30.0
-  eta_max: 2.4
+  eta_max: 2.5
+  # Remove jets within this Delta R of a selected electron, muon or photon
+  clean_dr: 0.4
 
 bjets:
   btag_threshold: 1
@@ -13,6 +34,8 @@ regions:
       NjetsMin: "1"
       Njets: "<=2"
       Nleptons: "==0"
+      Ntaus: "==0"
+      Nphotons: "==0"
       MET: ">250"
       Jet1Pt: ">100"
       dphi_jet_met_min: ">0.5"
@@ -24,56 +47,8 @@ regions:
       NjetsMin: "2"
       Njets: "<=3"
       Nleptons: "==0"
+      Ntaus: "==0"
+      Nphotons: "==0"
       MET: ">250"
-      Jet1Pt: ">100"
-      dphi_jet_met_min: ">0.5"
-
-  "1b:CR_Wlnu":
-    description: "W+jets control region in 1b category (electron or muon)"
-    cuts:
-      Nbjets: "==1"
-      Njets: "==2"
-      Nleptons: "==1"
-      Recoil: ">250"
-      MET: ">100"
-      MT: "<160"
-      Jet1Pt: ">100"
-      dphi_jet_met_min: ">0.5"
-
-  "2b:CR_Top":
-    description: "Top control region in 2b category (electron or muon) - "
-    cuts:
-      Nbjets: "==2"
-      Nleptons: "==1"
-      Recoil: ">250"
-      MT: "<160"
-      NAdditionalJets: ">=1"
-      Njets: ">=3"
-      Jet1Pt: ">100"
-      dphi_jet_met_min: ">0.5"
-
-  "1b:CR_Zll":
-    description: "Z+jets control region in 1b category (electron or muon) - b-jet condition relaxed"
-    cuts:
-      # Nbjets: "==1"  # Relaxed for Z CR
-      NjetsMin: "1"
-      Njets: "<=2"
-      Nleptons: "==2"
-      Recoil: ">250"
-      MllMin: ">70"
-      MllMax: "<110"
-      Jet1Pt: ">100"
-      dphi_jet_met_min: ">0.5"
-
-  "2b:CR_Zll":
-    description: "Z+jets control region in 2b category (electron or muon) - b-jet condition relaxed"
-    cuts:
-      # Nbjets: "==2"  # Relaxed for Z CR
-      NjetsMin: "2"
-      Njets: "<=3"
-      Nleptons: "==2"
-      Recoil: ">250"
-      MllMin: ">70"
-      MllMax: "<110"
       Jet1Pt: ">100"
       dphi_jet_met_min: ">0.5"

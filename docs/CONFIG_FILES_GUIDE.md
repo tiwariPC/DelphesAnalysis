@@ -6,26 +6,37 @@ This guide explains the structure and purpose of each configuration file in the 
 
 The configuration is split into logical files to avoid duplication:
 
-1. **File paths** → `samples_config.yaml`
+1. **File paths** → `samples_config.yaml` (generated, not edited by hand)
 2. **Background cross-sections** → `background_cross_sections.yaml`
 3. **Signal cross-sections** → `signal_cross_sections.yaml` (2HDM+a) and
-   `tchannel_signal_cross_sections.yaml` (t-channel DM)
+   `tchannel_{dm}_lam{L}_cross_sections.yaml` (t-channel DM)
 4. **Cuts and regions** → `cuts_config.yaml`
 
 ## Configuration Files
 
 ### 1. `config/samples_config.yaml`
 
-**Purpose**: Contains file paths for background ROOT files only.
+**Purpose**: Generated list of the signal and background Delphes ROOT files.
+
+It is written by code, not by hand (`utils/samples_config.py`):
+- `genevents/mg5_Generate_Run_bbMET.py` adds an entry each time it places a file in its output
+  directory;
+- `scripts/run_analysis_from_dirs.py` (called by `run_all.sh`) rewrites it from the
+  `--signal-dir` / `--background-dir` it is given, so it lists exactly the files analysed.
+
+Entries whose file no longer exists are dropped on every write.
 
 **Structure**:
 ```yaml
 backgrounds:
-  diboson:
-    file: /path/to/diboson_delphes_events.root
   ttbar:
-    file: /path/to/ttbar_delphes_events.root
+    file: /abs/path/DelphesBackground/ttbar_delphes_events.root
   # ... etc
+signals:
+  mA500_ma50:
+    file: /abs/path/DelphesSignal/sig_bbdm_mA500_ma50_delphes_events.root
+    mA: 500
+    ma: 50
 ```
 
 **Note**: Cross-sections are **NOT** stored here. They are in `background_cross_sections.yaml`.
@@ -68,12 +79,12 @@ signals:
 **Format**: Hierarchical structure by mA (mass A) and ma (mass a) values.
 **Units**: picobarns (pb)
 
-### 3b. `config/tchannel_signal_cross_sections.yaml`
+### 3b. `config/tchannel_s3m_lam2p2_cross_sections.yaml`
 
 **Purpose**: Cross-sections for the t-channel DM signal, in the same layout as
 `signal_cross_sections.yaml` with the mediator mass `mMED` in the `mA` slot and the DM mass `mDM` in
 the `ma` slot (matching the signal file names). Select it with
-`--signal-xsec config/tchannel_signal_cross_sections.yaml`. It is written by the event generator;
+`--signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml`. It is written by the event generator;
 keep one DM type and one coupling per file.
 
 The generator (`genevents/mg5_Generate_Run_bbMET.py`) also updates `signal_cross_sections.yaml` and
@@ -124,14 +135,10 @@ regions:
 
 ## Updating Configuration
 
-### Update Background File Paths
+### Update Sample File Paths
 
-Edit `config/samples_config.yaml`:
-```yaml
-backgrounds:
-  ttbar:
-    file: /new/path/to/ttbar_delphes_events.root
-```
+Do not edit `config/samples_config.yaml`; it is regenerated. Put the files in a directory and
+pass it with `--signal-dir` / `--background-dir` (to `run_all.sh` or `run_analysis_from_dirs.py`).
 
 ### Update Background Cross-Sections
 
@@ -152,8 +159,9 @@ signals:
 
 ### Add New Background
 
-1. Add file path to `samples_config.yaml`
-2. Add cross-section to `background_cross_sections.yaml`
+1. Add its card to `genevents/genScripts/` (or place `<name>_delphes_events.root` in the background
+   directory) and add the name to `EXPECTED_BACKGROUNDS` in `scripts/run_analysis_from_dirs.py`
+2. Add cross-section to `background_cross_sections.yaml` (the generator does this for you)
 
 ## Migration from Old Format
 

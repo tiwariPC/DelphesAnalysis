@@ -2,7 +2,8 @@
 """
 Automatically discover and process signal and background files from directories.
 
-Signal files: DelphesSignal/sig_bbdm_mA{mA}_ma{ma}_delphes_events.root
+Signal files: DelphesSignal/sig_bbdm_mA{mA}_ma{ma}_delphes_events.root (2HDM+a)
+              DelphesSignal/sig_bbdm_mA{mMED}_ma{mDM}_{dm}_lam{L}_delphes_events.root (t-channel)
 Background files: DelphesBackground/{bgname}_delphes_events.root
 """
 
@@ -25,29 +26,30 @@ EXPECTED_BACKGROUNDS = [
 ]
 
 
-def parse_signal_filename(filename: str) -> Optional[Tuple[int, int]]:
+def parse_signal_filename(filename: str) -> Optional[Tuple[int, int, str]]:
     """
-    Parse signal filename to extract mA and ma values.
+    Parse a signal filename into (mA, ma, tag).
 
-    Expected format: sig_bbdm_mA{mA}_ma{ma}_delphes_events.root
-    Example: sig_bbdm_mA1200_ma1000_delphes_events.root -> (1200, 1000)
+    Formats:
+      sig_bbdm_mA{mA}_ma{ma}_delphes_events.root           (2HDM+a, tag "")
+      sig_bbdm_mA{mMED}_ma{mDM}_{tag}_delphes_events.root  (t-channel, tag e.g. "s3m_lam2p2")
+    Example: sig_bbdm_mA500_ma50_s3m_lam2p2_delphes_events.root -> (500, 50, "s3m_lam2p2")
 
-    Returns:
-        Tuple of (mA, ma) or None if parsing fails
+    Returns None if the name does not match.
     """
-    # Pattern: sig_bbdm_mA{number}_ma{number}_delphes_events.root
-    pattern = r'sig_bbdm_mA(\d+)_ma(\d+)_delphes_events\.root'
-    match = re.search(pattern, filename)
+    match = re.fullmatch(r'sig_bbdm_mA(\d+)_ma(\d+)(?:_(\w+?))?_delphes_events\.root', filename)
     if match:
-        mA = int(match.group(1))
-        ma = int(match.group(2))
-        return (mA, ma)
+        return int(match.group(1)), int(match.group(2)), match.group(3) or ""
     return None
 
 
-def discover_signal_files(signal_dir: Path) -> List[Tuple[Path, int, int]]:
+def discover_signal_files(signal_dir: Path, signal_tag: Optional[str] = None) -> List[Tuple[Path, int, int]]:
     """
-    Discover all signal files in the directory and extract their (mA, ma) values.
+    Discover the signal files in the directory and extract their (mA, ma) values.
+
+    signal_tag selects files with that tag (e.g. "s3m_lam2p2"); "" selects untagged files.
+    With no tag given, the same (mA, ma) with different tags is an error, since the
+    analysis cannot tell which one to use.
 
     Returns:
         List of (file_path, mA, ma) tuples, sorted by mA then ma
@@ -58,15 +60,24 @@ def discover_signal_files(signal_dir: Path) -> List[Tuple[Path, int, int]]:
         print(f"  ✗ Error: Signal directory does not exist: {signal_dir}")
         return signal_files
 
+    seen = {}
     for file_path in signal_dir.glob("*.root"):
         filename = file_path.name
+        if filename.startswith("."):
+            continue  # temporary per-run file of an unfinished generation
         parsed = parse_signal_filename(filename)
-        if parsed:
-            mA, ma = parsed
-            signal_files.append((file_path, mA, ma))
-            print(f"  ✓ Found signal: {filename} -> mA={mA}, ma={ma}")
-        else:
+        if not parsed:
             print(f"  ⚠ Warning: Could not parse signal filename: {filename}")
+            continue
+        mA, ma, tag = parsed
+        if signal_tag is not None and tag != signal_tag:
+            continue
+        if (mA, ma) in seen:
+            sys.exit(f"  ✗ Error: two signal files for mA={mA}, ma={ma}: {seen[(mA, ma)]} and {filename}.\n"
+                     f"    Choose one with --signal-tag (e.g. the DM type and coupling, 's3m_lam2p2').")
+        seen[(mA, ma)] = filename
+        signal_files.append((file_path, mA, ma))
+        print(f"  ✓ Found signal: {filename} -> mA={mA}, ma={ma}" + (f", {tag}" if tag else ""))
 
     # Sort by mA, then ma
     signal_files.sort(key=lambda x: (x[1], x[2]))
@@ -261,46 +272,28 @@ def build_process_regions_command(
     return cmd
 
 
-def update_samples_config(background_files: Dict[str, Path], config_file: str = "config/samples_config.yaml"):
+def update_samples_config(background_files: Dict[str, Path], signal_files: List[Tuple[Path, int, int]],
+                          config_file: str = "config/samples_config.yaml"):
     """
-    Update samples_config.yaml with discovered background file paths.
-    Note: Cross-sections are NOT stored here - they are in background_cross_sections.yaml
+    Rewrite samples_config.yaml from the discovered files, so it lists exactly the
+    signal and background files being analysed (stale entries from other directories
+    are dropped). Cross-sections are NOT stored here - they are in *_cross_sections.yaml.
     """
-    import yaml
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from utils import samples_config
 
-    config_path = Path(config_file)
-
-    # Load existing config or create new one
-    if config_path.exists():
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f) or {}
-    else:
-        config = {}
-
-    if 'backgrounds' not in config:
-        config['backgrounds'] = {}
-
-    # Update file paths for discovered backgrounds (only file paths, no cross-sections)
-    for bg_name, file_path in background_files.items():
-        if bg_name not in config['backgrounds']:
-            config['backgrounds'][bg_name] = {}
-        config['backgrounds'][bg_name]['file'] = str(file_path.absolute())
-        # Remove cross_section if present (should be in background_cross_sections.yaml)
-        if 'cross_section' in config['backgrounds'][bg_name]:
-            del config['backgrounds'][bg_name]['cross_section']
-
-    # Write updated config
-    with open(config_path, 'w') as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-
-    print(f"  ✓ Updated {config_file} with background file paths")
-    print(f"    Note: Cross-sections are in background_cross_sections.yaml")
+    samples_config.replace_all(background_files, signal_files, path=config_file)
+    print(f"  ✓ Updated {config_file}: {len(background_files)} background(s), {len(signal_files)} signal(s)")
+    print(f"    Note: Cross-sections are in *_cross_sections.yaml")
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Automatically discover and process signal and background files from directories"
     )
+    parser.add_argument("--signal-tag", type=str, default=None,
+                       help="only use signal files with this tag, e.g. 's3m_lam2p2' for "
+                            "sig_bbdm_mA500_ma50_s3m_lam2p2_delphes_events.root; '' for untagged (2HDM+a) files")
     parser.add_argument("--signal-dir", type=str, required=True,
                        help="Directory containing signal ROOT files")
     parser.add_argument("--background-dir", type=str, required=True,
@@ -339,7 +332,7 @@ def main():
 
     # Discover signal files
     print(f"\nScanning signal directory: {signal_dir}")
-    signal_files = discover_signal_files(signal_dir)
+    signal_files = discover_signal_files(signal_dir, args.signal_tag)
 
     if not signal_files:
         print("  ✗ Error: No signal files found!")
@@ -357,9 +350,9 @@ def main():
 
     print(f"\n  Found {len(background_files)} background file(s)")
 
-    # Update samples config with background file paths
+    # Rewrite samples config from the files found in the input directories
     print(f"\nUpdating {args.samples_config}...")
-    update_samples_config(background_files, args.samples_config)
+    update_samples_config(background_files, signal_files, args.samples_config)
 
     # Build command
     print(f"\nBuilding command...")

@@ -46,7 +46,7 @@ python scripts/calculate_sensitivity.py --output-dir output --output-file output
 python scripts/plot_significance.py --output-dir output --lumi 290.0
 ```
 
-For t-channel signals add `--signal-xsec config/tchannel_signal_cross_sections.yaml` to the
+For t-channel signals add `--signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml` to the
 analysis command.
 
 ## 4. Results

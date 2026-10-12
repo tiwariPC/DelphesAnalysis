@@ -195,16 +195,27 @@ def calculate_sensitivity_for_region(datacard_file):
 
 
 def find_all_datacards(output_dir):
-    """Find all datacard.txt files."""
+    """Find the per-region datacards written by process_regions.py.
+
+    Current layout: <output>/datacards/<region>/datacard_mA{A}_ma{a}.txt (one per signal
+    point), labelled "<region>/mA{A}_ma{a}". Older layout <output>/plots/<region>/datacard.txt
+    is still read, labelled "<region>".
+    """
     output_dir = Path(output_dir)
-    plots_dir = output_dir / "plots"
-
-    if not plots_dir.exists():
-        return []
-
     datacards = []
-    for region_dir in plots_dir.iterdir():
-        if region_dir.is_dir():
+
+    datacards_dir = output_dir / "datacards"
+    if datacards_dir.exists():
+        for region_dir in sorted(p for p in datacards_dir.iterdir() if p.is_dir()):
+            if not region_dir.name.startswith("sr"):
+                continue  # significance is quoted for the signal regions only
+            for datacard_file in sorted(region_dir.glob("datacard_*.txt")):
+                point = datacard_file.stem[len("datacard_"):]
+                datacards.append((datacard_file, f"{region_dir.name}/{point}"))
+
+    plots_dir = output_dir / "plots"
+    if not datacards and plots_dir.exists():
+        for region_dir in sorted(p for p in plots_dir.iterdir() if p.is_dir()):
             datacard_file = region_dir / "datacard.txt"
             if datacard_file.exists():
                 datacards.append((datacard_file, region_dir.name))
@@ -270,7 +281,7 @@ def main():
 
     # Filter by region if specified
     if args.region:
-        datacards = [(dc, rn) for dc, rn in datacards if rn == args.region]
+        datacards = [(dc, rn) for dc, rn in datacards if rn.split("/")[0] == args.region]
         if not datacards:
             output_lines.append(f"✗ Region '{args.region}' not found!")
             output_text = "\n".join(output_lines)
@@ -301,16 +312,34 @@ def main():
         except Exception as e:
             output_lines.append(f"    ✗ Error: {e}")
 
+    # Combination of the signal regions per signal point. SR1b and SR2b are disjoint
+    # (exactly 1 vs exactly 2 b-tags), so the Asimov significances add in quadrature.
+    by_point = {}
+    for label, metrics in all_metrics.items():
+        if "/" in label:
+            by_point.setdefault(label.split("/", 1)[1], []).append(metrics)
+    for point, parts in sorted(by_point.items()):
+        if len(parts) < 2:
+            continue
+        s_tot = sum(m["signal"] for m in parts)
+        b_tot = sum(m["total_background"] for m in parts)
+        all_metrics[f"combined/{point}"] = {
+            "signal": s_tot,
+            "total_background": b_tot,
+            "s_over_b": s_tot / b_tot if b_tot > 0 else 0.0,
+            "significance": float(np.sqrt(sum(m["significance"] ** 2 for m in parts))),
+        }
+
     # Summary table
     output_lines.append("\n" + "="*70)
     output_lines.append("Summary")
     output_lines.append("="*70)
 
     if args.format == "table":
-        output_lines.append(f"\n{'Region':<20} {'Signal':>12} {'Background':>12} {'S/B':>10} {'Z':>10}")
-        output_lines.append("-" * 70)
+        output_lines.append(f"\n{'Region':<28} {'Signal':>12} {'Background':>12} {'S/B':>10} {'Z':>10}")
+        output_lines.append("-" * 78)
         for region_name, metrics in sorted(all_metrics.items()):
-            output_lines.append(f"{region_name:<20} {metrics['signal']:>12.4f} "
+            output_lines.append(f"{region_name:<28} {metrics['signal']:>12.4f} "
                   f"{metrics['total_background']:>12.4f} "
                   f"{metrics['s_over_b']:>10.4f} "
                   f"{metrics['significance']:>10.4f}")

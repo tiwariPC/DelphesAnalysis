@@ -9,6 +9,7 @@ Optimized: Load each ROOT file once, process all regions.
 import sys
 import argparse
 import re
+import shutil
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -24,26 +25,25 @@ from src.bbdmDelphes import (
     build_met,
     build_electrons,
     build_muons,
-    calculate_mt,
-    calculate_recoil,
-    calculate_mll,
+    build_photons,
+    build_taus,
+    clean_jets,
     calculate_observables,
     generate_datacard,
     save_datacard
 )
-from src.regions import load_regions, get_region_type, get_region_category
+from src.regions import load_regions, get_region_category
 from src.plotting_utils import plot_cutflow, plot_histogram, plot_signal_vs_background
 from collections import OrderedDict
 import hist
 
 # Binning configuration
 # Variable binning based on region category:
-# - 1b regions: MET/Recoil with [250, 300, 400, 550, 1000] (4 bins)
+# - 1b regions: MET with [250, 300, 400, 550, 1000] (4 bins)
 # - 2b regions: cost_star with [0.0, 0.25, 0.50, 0.75, 1.0] (4 bins)
 PLOT_BINNING = {
-    # For 1b regions: variable binning for MET/Recoil
+    # For 1b regions: variable binning for MET
     "met": {"bins": [250, 300, 400, 550, 1000], "variable": True},  # 4 bins for 1b regions
-    "recoil": {"bins": [250, 300, 400, 550, 1000], "variable": True},  # 4 bins for 1b regions
     # For 2b regions: variable binning for cost_star
     "cost_star": {"bins": [0.0, 0.25, 0.50, 0.75, 1.0], "variable": True},  # 4 bins for 2b regions
     # Other observables use regular binning
@@ -51,10 +51,6 @@ PLOT_BINNING = {
     "ptbb": {"range": (0, 800), "bins": 20, "variable": False},
     "dphi_jet_met_min": {"range": (0, np.pi), "bins": 20, "variable": False},
     "ht": {"range": (0, 2000), "bins": 25, "variable": False},
-    "mt": {"range": (0, 300), "bins": 20, "variable": False},
-    "mll": {"range": (70, 110), "bins": 20, "variable": False},
-    "lep1_pt": {"range": (30, 500), "bins": 30, "variable": False},  # Leading lepton pT (matches StackPlotter: 30-500 GeV)
-    "min_dphi": {"range": (0, 3.2), "bins": 32, "variable": False},  # Alias for dphi_jet_met_min (matches StackPlotter: 0-3.2)
 }
 
 def load_background_cross_sections(config_file="config/background_cross_sections.yaml"):
@@ -244,7 +240,7 @@ def count_events_in_root_file(root_file, tree_name="Delphes", use_weight_hist=Tr
 def load_sample_and_build_objects(file_path, cuts_config=None):
     """
     Load events and build all physics objects once per sample.
-    Returns dict with events, jets, bjets, met, electrons, muons, additional_vars
+    Returns dict with events, jets, bjets, met, electrons, muons, photons, taus
     """
     try:
         events = load_delphes_events(file_path)
@@ -258,124 +254,28 @@ def load_sample_and_build_objects(file_path, cuts_config=None):
     else:
         cuts = get_default_cuts()
 
+    # Object selection (config/cuts_config.yaml); jets are cleaned against the
+    # selected electrons, muons and photons
+    electrons = build_electrons(events, pt_min=cuts["electron_pt_min"], eta_max=cuts["electron_eta_max"])
+    muons = build_muons(events, pt_min=cuts["muon_pt_min"], eta_max=cuts["muon_eta_max"])
+    photons = build_photons(events, pt_min=cuts["photon_pt_min"], eta_max=cuts["photon_eta_max"])
+    taus = build_taus(events, pt_min=cuts["tau_pt_min"], eta_max=cuts["tau_eta_max"])
     jets = build_jets(events, pt_min=cuts["jet_pt_min"], eta_max=cuts["jet_eta_max"])
+    jets = clean_jets(jets, [electrons, muons, photons], dr_min=cuts["jet_clean_dr"])
 
-    # Preselection: require at least one jet with pt > 30
+    # Preselection: require at least one selected jet
     njets = ak.num(jets['PT'], axis=1)
     preselection_mask = njets >= 1
 
     # Apply preselection to all collections
+    def presel(coll):
+        return None if coll is None else {k: v[preselection_mask] for k, v in coll.items()}
     events = events[preselection_mask]
-    jets = {k: v[preselection_mask] for k, v in jets.items()}
+    jets = presel(jets)
+    electrons, muons, photons, taus = presel(electrons), presel(muons), presel(photons), presel(taus)
 
     bjets = select_bjets(jets, btag_threshold=cuts["btag_threshold"])
     met = build_met(events)
-    electrons = build_electrons(events)
-    muons = build_muons(events)
-
-    additional_vars = {}
-    nleptons = ak.zeros_like(ak.num(jets['PT'], axis=1))
-    if electrons is not None:
-        nleptons = nleptons + ak.num(electrons['PT'], axis=1)
-    if muons is not None:
-        nleptons = nleptons + ak.num(muons['PT'], axis=1)
-
-    # Calculate MT and Recoil
-    if ak.sum(nleptons >= 1) > 0:
-        el_pt = electrons['PT'] if electrons is not None else None
-        el_phi = electrons['Phi'] if electrons is not None else None
-        mu_pt = muons['PT'] if muons is not None else None
-        mu_phi = muons['Phi'] if muons is not None else None
-
-        arrays_to_concat_pt = []
-        arrays_to_concat_phi = []
-        if el_pt is not None:
-            arrays_to_concat_pt.append(el_pt)
-            arrays_to_concat_phi.append(el_phi)
-        if mu_pt is not None:
-            arrays_to_concat_pt.append(mu_pt)
-            arrays_to_concat_phi.append(mu_phi)
-
-        if len(arrays_to_concat_pt) > 0:
-            combined_leptons_pt = ak.concatenate(arrays_to_concat_pt, axis=1)
-            combined_leptons_phi = ak.concatenate(arrays_to_concat_phi, axis=1)
-        else:
-            n_events = len(nleptons)
-            combined_leptons_pt = ak.Array([[]] * n_events)
-            combined_leptons_phi = ak.Array([[]] * n_events)
-
-        mt = calculate_mt(combined_leptons_pt, combined_leptons_phi, met['MET'], met['Phi'])
-        recoil = calculate_recoil(combined_leptons_pt, combined_leptons_phi, met['MET'], met['Phi'])
-        additional_vars['MT'] = mt
-        additional_vars['Recoil'] = recoil
-
-    # Calculate Mll
-    if ak.sum(nleptons >= 2) > 0:
-        el_pt = electrons['PT'] if electrons is not None else None
-        el_eta = electrons['Eta'] if electrons is not None else None
-        el_phi = electrons['Phi'] if electrons is not None else None
-        el_charge = electrons['Charge'] if electrons is not None else None
-        mu_pt = muons['PT'] if muons is not None else None
-        mu_eta = muons['Eta'] if muons is not None else None
-        mu_phi = muons['Phi'] if muons is not None else None
-        mu_charge = muons['Charge'] if muons is not None else None
-
-        arrays_to_concat_pt = []
-        arrays_to_concat_eta = []
-        arrays_to_concat_phi = []
-        arrays_to_concat_charge = []
-        if el_pt is not None and ak.sum(ak.num(el_pt, axis=1) > 0) > 0:
-            arrays_to_concat_pt.append(el_pt)
-            arrays_to_concat_eta.append(el_eta)
-            arrays_to_concat_phi.append(el_phi)
-            arrays_to_concat_charge.append(el_charge)
-        if mu_pt is not None and ak.sum(ak.num(mu_pt, axis=1) > 0) > 0:
-            arrays_to_concat_pt.append(mu_pt)
-            arrays_to_concat_eta.append(mu_eta)
-            arrays_to_concat_phi.append(mu_phi)
-            arrays_to_concat_charge.append(mu_charge)
-
-        if len(arrays_to_concat_pt) > 0:
-            all_leptons_pt = ak.concatenate(arrays_to_concat_pt, axis=1)
-            all_leptons_eta = ak.concatenate(arrays_to_concat_eta, axis=1)
-            all_leptons_phi = ak.concatenate(arrays_to_concat_phi, axis=1)
-            all_leptons_charge = ak.concatenate(arrays_to_concat_charge, axis=1)
-
-            sorted_indices = ak.argsort(all_leptons_pt, axis=1, ascending=False)
-            sorted_pt = all_leptons_pt[sorted_indices]
-            sorted_eta = all_leptons_eta[sorted_indices]
-            sorted_phi = all_leptons_phi[sorted_indices]
-            sorted_charge = all_leptons_charge[sorted_indices]
-
-            lepton1_pt = ak.firsts(sorted_pt, axis=1)
-            lepton1_eta = ak.firsts(sorted_eta, axis=1)
-            lepton1_phi = ak.firsts(sorted_phi, axis=1)
-            lepton1_charge = ak.firsts(sorted_charge, axis=1)
-
-            padded_pt = ak.pad_none(sorted_pt, 2, axis=1)
-            padded_eta = ak.pad_none(sorted_eta, 2, axis=1)
-            padded_phi = ak.pad_none(sorted_phi, 2, axis=1)
-            padded_charge = ak.pad_none(sorted_charge, 2, axis=1)
-
-            try:
-                lepton2_pt = ak.fill_none(padded_pt[:, 1], 0.0)
-                lepton2_eta = ak.fill_none(padded_eta[:, 1], 0.0)
-                lepton2_phi = ak.fill_none(padded_phi[:, 1], 0.0)
-                lepton2_charge = ak.fill_none(padded_charge[:, 1], 0)
-            except (IndexError, TypeError):
-                lepton2_pt = ak.fill_none(ak.firsts(padded_pt[:, 1:], axis=1), 0.0)
-                lepton2_eta = ak.fill_none(ak.firsts(padded_eta[:, 1:], axis=1), 0.0)
-                lepton2_phi = ak.fill_none(ak.firsts(padded_phi[:, 1:], axis=1), 0.0)
-                lepton2_charge = ak.fill_none(ak.firsts(padded_charge[:, 1:], axis=1), 0)
-
-            lepton1_pt = ak.fill_none(lepton1_pt, 0.0)
-            lepton1_eta = ak.fill_none(lepton1_eta, 0.0)
-            lepton1_phi = ak.fill_none(lepton1_phi, 0.0)
-            lepton1_charge = ak.fill_none(lepton1_charge, 0)
-
-            mll = calculate_mll(lepton1_pt, lepton1_eta, lepton1_phi, lepton1_charge,
-                               lepton2_pt, lepton2_eta, lepton2_phi, lepton2_charge)
-            additional_vars['Mll'] = mll
 
     return {
         "events": events,
@@ -384,7 +284,8 @@ def load_sample_and_build_objects(file_path, cuts_config=None):
         "met": met,
         "electrons": electrons,
         "muons": muons,
-        "additional_vars": additional_vars
+        "photons": photons,
+        "taus": taus,
     }
 
 
@@ -429,7 +330,7 @@ def calculate_dphi_jet_met_min_all_events(jets, met):
 
 
 def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, muons,
-                              additional_vars, xs_pb, ngen, region_name, regions_config,
+                              photons, taus, xs_pb, ngen, region_name, regions_config,
                               lumi_fb=290.0, output_dir=None, cuts_config=None):
     """Process a sample for a specific region using pre-loaded events and objects."""
     # Build cutflow step by step - apply cuts in the order they appear in region config
@@ -478,6 +379,9 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
     if muons is not None:
         nleptons = nleptons + ak.num(muons.get('PT', ak.Array([])), axis=1)
 
+    nphotons = ak.num(photons['PT'], axis=1) if photons is not None else ak.zeros_like(njets)
+    ntaus = ak.num(taus['PT'], axis=1) if taus is not None else ak.zeros_like(njets)
+
     # Calculate weight for scaling cutflow to match weighted histograms
     # Weight = (cross_section * luminosity * 1000) / number_of_generated_events
     weight = (xs_pb * lumi_fb * 1000.0) / ngen if ngen > 0 else 1.0
@@ -506,48 +410,17 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
             mask = mask & parse_cut_condition(cut_value, nleptons)
             cutflow["Nleptons"] = ak.sum(mask) * weight
 
+        elif cut_name == 'Ntaus':
+            mask = mask & parse_cut_condition(cut_value, ntaus)
+            cutflow["Ntaus"] = ak.sum(mask) * weight
+
+        elif cut_name == 'Nphotons':
+            mask = mask & parse_cut_condition(cut_value, nphotons)
+            cutflow["Nphotons"] = ak.sum(mask) * weight
+
         elif cut_name == 'MET':
             mask = mask & parse_cut_condition(cut_value, met_values)
             cutflow["MET"] = ak.sum(mask) * weight
-
-        elif cut_name == 'Recoil' and 'Recoil' in additional_vars:
-            recoil = additional_vars.get('Recoil')
-            if recoil is not None:
-                mask = mask & parse_cut_condition(cut_value, recoil)
-                cutflow["Recoil"] = ak.sum(mask) * weight
-
-        elif cut_name == 'MT' and 'MT' in additional_vars:
-            mt = additional_vars.get('MT')
-            if mt is not None:
-                mask = mask & parse_cut_condition(cut_value, mt)
-                cutflow["MT"] = ak.sum(mask) * weight
-
-        elif cut_name == 'MllMin' and 'Mll' in additional_vars:
-            mll = additional_vars.get('Mll')
-            if mll is not None:
-                if isinstance(mll, ak.Array):
-                    mll_np = np.asarray(ak.to_numpy(mll))
-                else:
-                    mll_np = np.asarray(mll)
-                threshold = float(cut_value.replace('>', ''))
-                mask = mask & ak.Array(mll_np >= threshold)
-                cutflow["MllMin"] = ak.sum(mask) * weight
-
-        elif cut_name == 'MllMax' and 'Mll' in additional_vars:
-            mll = additional_vars.get('Mll')
-            if mll is not None:
-                if isinstance(mll, ak.Array):
-                    mll_np = np.asarray(ak.to_numpy(mll))
-                else:
-                    mll_np = np.asarray(mll)
-                threshold = float(cut_value.replace('<', ''))
-                mask = mask & ak.Array(mll_np <= threshold)
-                cutflow["MllMax"] = ak.sum(mask) * weight
-
-        elif cut_name == 'NAdditionalJets':
-            nadditional = njets - nbjets
-            mask = mask & parse_cut_condition(cut_value, nadditional)
-            cutflow["NAdditionalJets"] = ak.sum(mask) * weight
 
         elif cut_name == 'Jet1Pt':
             jet1_pt = ak.firsts(jets['PT'], axis=1)
@@ -578,69 +451,21 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
     selected_met = {k: v[mask] for k, v in met.items()}
     obs = calculate_observables(selected_jets, selected_bjets, selected_met, ak.Array(np.ones(ak.sum(mask), dtype=bool)))
 
-    for key in additional_vars:
-        if key in ['MT', 'Recoil', 'Mll']:
-            obs[key.lower()] = additional_vars[key][mask]
-
-    # Add lepton-specific observables for W control regions (matching StackPlotter)
-    if 'CR_Wlnu' in region_name or 'CR_Top' in region_name:
-        # Get leading lepton pT (either electron or muon, whichever has higher pT)
-        lep1_pt = np.full(n_selected, np.nan)
-
-        if electrons is not None and 'PT' in electrons:
-            el_pt = ak.firsts(electrons['PT'][mask], axis=1)
-            el_pt = ak.fill_none(el_pt, np.nan)
-            el_pt_np = np.asarray(ak.to_numpy(el_pt))
-        else:
-            el_pt_np = np.full(n_selected, np.nan)
-
-        if muons is not None and 'PT' in muons:
-            mu_pt = ak.firsts(muons['PT'][mask], axis=1)
-            mu_pt = ak.fill_none(mu_pt, np.nan)
-            mu_pt_np = np.asarray(ak.to_numpy(mu_pt))
-        else:
-            mu_pt_np = np.full(n_selected, np.nan)
-
-        # Take the maximum (leading lepton) - handles cases where both exist
-        lep1_pt = np.maximum(np.nan_to_num(el_pt_np, nan=-1), np.nan_to_num(mu_pt_np, nan=-1))
-        lep1_pt[lep1_pt < 0] = np.nan  # Restore NaN where both were NaN
-        obs['lep1_pt'] = lep1_pt
-
     weights = np.ones(n_selected) * weight
 
     histograms = {}
-    region_type = get_region_type(region_name)
     region_category = get_region_category(region_name)
     if region_category == "2b":
-        sr_observables = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star"]
-        cr_observables = ["recoil", "mt", "mll", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star"]
+        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star"]
     else:  # 1b category
-        sr_observables = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-        cr_observables = ["recoil", "mt", "mll", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-
-    # Add lepton-specific observables for W and Top control regions (matching StackPlotter)
-    if 'CR_Wlnu' in region_name or 'CR_Top' in region_name:
-        cr_observables.extend(["lep1_pt", "min_dphi"])
-
-    observables_to_plot = sr_observables if region_type == "SR" else cr_observables
+        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
 
     for obs_name in observables_to_plot:
-        # Handle alias: min_dphi uses dphi_jet_met_min data
-        if obs_name == "min_dphi":
-            if "dphi_jet_met_min" not in obs:
-                continue
-            obs_data = obs["dphi_jet_met_min"]
-            obs_name_for_binning = "min_dphi"
-        else:
-            if obs_name not in obs:
-                continue
-            obs_data = obs[obs_name]
-            obs_name_for_binning = obs_name
-
-        if obs_name_for_binning not in PLOT_BINNING:
+        if obs_name not in obs or obs_name not in PLOT_BINNING:
             continue
+        obs_data = obs[obs_name]
 
-        binning = PLOT_BINNING[obs_name_for_binning]
+        binning = PLOT_BINNING[obs_name]
         valid = ~np.isnan(obs_data)
         if np.sum(valid) > 0:
             label_map = {
@@ -648,13 +473,8 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
                 "mbb": r"$m(bb)$ [GeV]",
                 "ptbb": r"$p_T(bb)$ [GeV]",
                 "dphi_jet_met_min": r"$\min(\Delta\phi(\rm jet, E_T^{\rm miss}))$",
-                "min_dphi": r"$\min(\Delta\phi(\rm jet, E_T^{\rm miss}))$",  # Alias
                 "ht": r"$H_T$ [GeV]",
                 "cost_star": r"$|\cos\theta^{*}|$",
-                "recoil": r"Recoil [GeV]",
-                "mt": r"$M_T$ [GeV]",
-                "mll": r"$m(\ell\ell)$ [GeV]",
-                "lep1_pt": r"$p_T(\ell_1)$ [GeV]",
             }
             label = label_map.get(obs_name, obs_name)
 
@@ -737,9 +557,13 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
     plots_dir = output_dir / "plots"
-    plots_dir.mkdir(exist_ok=True)
     datacards_dir = output_dir / "datacards"  # New directory for datacards
-    datacards_dir.mkdir(exist_ok=True)
+    # Start from empty plot/datacard dirs: files of regions or signal points from an
+    # earlier run would otherwise be picked up by the combination and sensitivity steps.
+    for d in (plots_dir, datacards_dir):
+        if d.exists():
+            shutil.rmtree(d)
+        d.mkdir()
 
     regions_config = load_regions(args.cuts_config)
     background_files, _ = load_samples_config(args.samples_config)  # Only load file paths
@@ -825,16 +649,16 @@ def main():
             print(f"  ✗ Failed to load signal {i+1}: {sig_file}")
             continue
 
-    signal_outputs = {}
-    for region_name in regions_config.keys():
-        output = process_sample_for_region(
+        signal_outputs = {}
+        for region_name in regions_config.keys():
+            output = process_sample_for_region(
                 sig_label, signal_data["events"], signal_data["jets"], signal_data["bjets"],
-            signal_data["met"], signal_data["electrons"], signal_data["muons"],
-                signal_data["additional_vars"], sig_xs, sig_ngen,
-            region_name, regions_config, args.lumi, output_dir, args.cuts_config
-        )
-        if output:
-            signal_outputs[region_name] = output
+                signal_data["met"], signal_data["electrons"], signal_data["muons"],
+                signal_data["photons"], signal_data["taus"], sig_xs, sig_ngen,
+                region_name, regions_config, args.lumi, output_dir, args.cuts_config
+            )
+            if output:
+                signal_outputs[region_name] = output
 
         all_signal_outputs.append(signal_outputs)
 
@@ -857,7 +681,7 @@ def main():
             output = process_sample_for_region(
                 bg_name, bg_data["events"], bg_data["jets"], bg_data["bjets"],
                 bg_data["met"], bg_data["electrons"], bg_data["muons"],
-                bg_data["additional_vars"], xs_pb, ngen,
+                bg_data["photons"], bg_data["taus"], xs_pb, ngen,
                 region_name, regions_config, args.lumi, output_dir, args.cuts_config
             )
             if output:
@@ -897,15 +721,8 @@ def main():
         del background_outputs["sTop_tW"]
 
     for region_name in regions_config.keys():
-        region_type = get_region_type(region_name)
         region_category = get_region_category(region_name)
-
-        if region_type == "SR":
-            region_dir = plots_dir / f"sr{region_category}"
-        else:
-            cr_part = region_name.split(':')[1]
-            cr_name = cr_part.replace('CR_', '').lower()
-            region_dir = plots_dir / f"cr{region_category}_{cr_name}"
+        region_dir = plots_dir / f"sr{region_category}"
 
         region_dir.mkdir(exist_ok=True)
 
@@ -919,43 +736,28 @@ def main():
 
         # Collect histograms for each observable - overlay all signals
         signal_hists = {}  # Dictionary of {label: {obs_name: hist}}
-        signal_yields_dict = {}  # Dictionary of {label: yield} for SRs only
+        signal_yields_dict = {}  # Dictionary of {label: yield}
         for i, signal_outputs in enumerate(all_signal_outputs):
-        if region_name in signal_outputs:
+            if region_name in signal_outputs:
                 sig_label = signal_info_list[i][0]
                 sig_xs = signal_info_list[i][1]
                 sig_ngen = signal_info_list[i][2]
                 signal_hists[sig_label] = signal_outputs[region_name]["histograms"]
-                # Calculate yield for SRs to determine top signals
-                if region_type == "SR":
-                    signal_yields_dict[sig_label] = signal_outputs[region_name]["n_selected"] * (sig_xs * args.lumi * 1000.0) / sig_ngen
+                # Yield, to pick the top signals to overlay
+                signal_yields_dict[sig_label] = signal_outputs[region_name]["n_selected"] * (sig_xs * args.lumi * 1000.0) / sig_ngen
 
         bg_hists = {}
         for bg_name in background_outputs:
             if region_name in background_outputs[bg_name]:
                 bg_hists[bg_name] = background_outputs[bg_name][region_name]["histograms"]
 
-        # Plot each observable - only relevant ones for this region type
-        if region_type == "SR":
-            if region_category == "1b":
-                # 1b SR: MET is main variable (with variable binning)
-                observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-            else:  # 2b SR
-                # 2b SR: cost_star is main variable (with variable binning), also plot MET
-                observables_to_plot = ["cost_star", "met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-        else:  # CR
-            if region_category == "1b":
-                # 1b CR: Recoil is main variable (with variable binning)
-                observables_to_plot = ["recoil", "mt", "mll", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-                # Add lepton pT and min_dPhi for W/Top control regions (matching StackPlotter)
-                if 'CR_Wlnu' in region_name or 'CR_Top' in region_name:
-                    observables_to_plot.extend(["lep1_pt", "min_dphi"])
-            else:  # 2b CR
-                # 2b CR: cost_star is main variable (with variable binning)
-                observables_to_plot = ["cost_star", "recoil", "mt", "mll", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
-                # Add lepton pT and min_dPhi for W/Top control regions (matching StackPlotter)
-                if 'CR_Wlnu' in region_name or 'CR_Top' in region_name:
-                    observables_to_plot.extend(["lep1_pt", "min_dphi"])
+        # Plot each observable
+        if region_category == "1b":
+            # 1b SR: MET is main variable (with variable binning)
+            observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
+        else:  # 2b SR
+            # 2b SR: cost_star is main variable (with variable binning), also plot MET
+            observables_to_plot = ["cost_star", "met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
 
         for obs_name in observables_to_plot:
             bg_hists_obs = {}
@@ -968,27 +770,25 @@ def main():
 
             # Collect all signal histograms for this observable
             signal_hists_obs = {}
-            if region_type == "SR":
-                # For SRs, only overlay top 3 signals by yield
-                if signal_yields_dict:
-                    # Sort signals by yield (descending) and take top 3
-                    sorted_signals = sorted(signal_yields_dict.items(), key=lambda x: x[1], reverse=True)[:3]
-                    top_signal_labels = [label for label, _ in sorted_signals]
-                    for sig_label in top_signal_labels:
-                        if sig_label in signal_hists and obs_name in signal_hists[sig_label]:
-                            sig_hist_obs = signal_hists[sig_label][obs_name]
-                            signal_values = sig_hist_obs.values()
-                            if len(signal_values) > 0 and np.sum(signal_values) > 0:
-                                signal_hists_obs[sig_label] = sig_hist_obs
-                else:
-                    # Fallback: use all signals if yields not available
-                    for sig_label, sig_hists in signal_hists.items():
-                        if obs_name in sig_hists:
-                            sig_hist_obs = sig_hists[obs_name]
-                            signal_values = sig_hist_obs.values()
-                            if len(signal_values) > 0 and np.sum(signal_values) > 0:
-                                signal_hists_obs[sig_label] = sig_hist_obs
-            # Note: For CRs, we don't overlay signals (existing behavior)
+            # Overlay the top 3 signals by yield
+            if signal_yields_dict:
+                # Sort signals by yield (descending) and take top 3
+                sorted_signals = sorted(signal_yields_dict.items(), key=lambda x: x[1], reverse=True)[:3]
+                top_signal_labels = [label for label, _ in sorted_signals]
+                for sig_label in top_signal_labels:
+                    if sig_label in signal_hists and obs_name in signal_hists[sig_label]:
+                        sig_hist_obs = signal_hists[sig_label][obs_name]
+                        signal_values = sig_hist_obs.values()
+                        if len(signal_values) > 0 and np.sum(signal_values) > 0:
+                            signal_hists_obs[sig_label] = sig_hist_obs
+            else:
+                # Fallback: use all signals if yields not available
+                for sig_label, sig_hists in signal_hists.items():
+                    if obs_name in sig_hists:
+                        sig_hist_obs = sig_hists[obs_name]
+                        signal_values = sig_hist_obs.values()
+                        if len(signal_values) > 0 and np.sum(signal_values) > 0:
+                            signal_hists_obs[sig_label] = sig_hist_obs
 
             # Scale signal histograms for plotting only (if scale factor != 1.0)
             signal_hists_obs_scaled = {}
@@ -1060,15 +860,7 @@ def main():
                         bg_yield = background_outputs[bg_name][region_name]["n_selected"] * (bg_xs[bg_name] * args.lumi * 1000.0) / count_events_in_root_file(background_files[bg_name])
                         bg_rates[bg_name] = bg_yield
 
-            dominant_bkg = None
-            if region_type == "CR" and bg_rates:
-                dominant_bkg = max(bg_rates.keys(), key=lambda x: bg_rates[x])
-
-            bin_name = region_type
-            if region_type == "SR":
-                main_observable = "cost_star" if region_category == "2b" else "met"
-            else:
-                main_observable = "cost_star" if region_category == "2b" else "recoil"
+            bin_name = "SR"
 
             # Generate datacard for each signal point
             for i, signal_outputs in enumerate(all_signal_outputs):
@@ -1093,14 +885,12 @@ def main():
                     # Use the same directory name format as region_dir
                     region_dir_name = region_dir.name
 
-            datacard = generate_datacard(
-                signal_name="sig",
-                signal_rate=signal_yield,
-                backgrounds=bg_rates,
-                region_type=region_type,
-                bin_name=bin_name,
-                dominant_bkg=dominant_bkg,
-                observation=-1,
+                    datacard = generate_datacard(
+                        signal_name="sig",
+                        signal_rate=signal_yield,
+                        backgrounds=bg_rates,
+                        bin_name=bin_name,
+                        observation=-1,
                         shapes_file=""  # No shapes files
                     )
                     # Save datacard to datacards directory instead of plots directory
@@ -1130,7 +920,7 @@ def main():
                     match = re.search(r'datacard_mA(\d+)_ma(\d+)\.txt', datacard_file.name)
                     if match:
                         sig_key = f"mA{match.group(1)}_ma{match.group(2)}"
-            else:
+                    else:
                         # Fallback: try to extract from other patterns
                         match = re.search(r'datacard_sig(\d+)\.txt', datacard_file.name)
                         if match:

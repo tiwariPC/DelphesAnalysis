@@ -5,25 +5,32 @@ Cards live in genScripts/ (<name>.mg5 process, <name>.madevent settings); MadGra
 installed into this directory on first use.
 
 Output files (inputs of run_analysis_from_dirs.py), one merged file per sample:
-  signal      <signal-outdir>/sig_bbdm_mA{A}_ma{a}_delphes_events.root
-              A, a = mA, ma (2hdma) or mMED, mDM (tchannel)
+  signal      <signal-outdir>/sig_bbdm_mA{mA}_ma{ma}_delphes_events.root            (2hdma)
+              <signal-outdir>/sig_bbdm_mA{mMED}_ma{mDM}_{dm}_lam{L}_delphes_events.root (tchannel,
+              e.g. sig_bbdm_mA500_ma50_s3m_lam2p2_delphes_events.root)
   background  <background-outdir>/<name>_delphes_events.root
 
 Usage: python mg5_Generate_Run_bbMET.py [options]
   --proc P              signal | bkg | all | comma list of backgrounds (default signal)
   --signal-model M      tchannel (S3M/S3D) | 2hdma (type II)     (default tchannel)
   --dm-type T           t-channel only: s3m | s3d, one per call  (default s3m)
-  --lam L               t-channel coupling DMS3D 3 3, fixed per call (default 1.0)
+  --lam L               t-channel coupling DMS3D 3 3, fixed per call (default 2.2)
   --points A:a,A:a,...  explicit points (mMED:mDM or mA:ma)
   --npoints N           first N built-in default points (up to 8)
   --mode single|grid    no --points/--npoints: one point, or the full grid
   --mMED/--mDM          t-channel point for single mode          (1000, 100)
   --mA/--ma             2HDM+a point for single mode             (500, 100)
   --nevents N           events per run                           (default 10000)
-  --nruns N             runs per sample, other seeds, merged with hadd (default 1)
+  --nruns N             runs per signal point, other seeds, merged with hadd (default 1)
+  --bkg-nruns N         runs per background, merged with hadd    (default: --nruns)
+  --jobs N              samples generated at the same time; each MadGraph gets
+                        cores/N cores, and concurrent signal points use copies of the
+                        process dir (<dir>_j1, ...)              (default 1)
   --seed S              base iseed; point index and run number are added (default 1000)
-  --signal-outdir D     (default genevents/DelphesSignal)
-  --background-outdir D (default genevents/DelphesBackground)
+  --data-dir D          base dir for large files                 (default genevents/)
+  --work-dir D          MadGraph process dirs, cards, logs       (default <data-dir>/work)
+  --signal-outdir D     (default <data-dir>/DelphesSignal)
+  --background-outdir D (default <data-dir>/DelphesBackground)
   --delphes-card C      CMS (default), another MG5 card suffix, or a .dat path
   --keep-events         keep MadGraph Events/<run> directories
   --force               regenerate even if the output ROOT file exists
@@ -42,11 +49,15 @@ Examples:
   python mg5_Generate_Run_bbMET.py --proc bkg --nruns 3 --background-outdir DIR
   python mg5_Generate_Run_bbMET.py --proc ttbar,znnjets --nevents 100000 --delphes-card CMS
 
+MadGraph itself stays in genevents/ (its config holds absolute paths).
+
 Environment: MG5_EXE, MG5_PYTHON (<= 3.12), MG5_TARBALL_URL, UFO_TCHANNEL, UFO_2HDMA.
-Cross-sections (mean over runs) go to config/{signal,tchannel_signal,background}_cross_sections.yaml.
+Cross-sections (mean over runs) go to config/signal_cross_sections.yaml (2hdma),
+config/tchannel_{dm}_lam{L}_cross_sections.yaml (tchannel) and config/background_cross_sections.yaml.
 """
 
 import argparse
+import glob
 import itertools
 import os
 import re
@@ -79,7 +90,11 @@ UFO_TCHANNEL = os.environ.get("UFO_TCHANNEL", os.path.join(_SCRIPT_DIR, "ufo_mod
 # 2HDM+a type II UFO shipped in ufo_model/Pseudoscalar_2HDM (4FS, DM particle "Xd").
 UFO_2HDMA = os.environ.get("UFO_2HDMA", os.path.join(_SCRIPT_DIR, "ufo_model", "Pseudoscalar_2HDM"))
 
-WORK_DIR = os.path.join(_SCRIPT_DIR, "work")
+# Process dirs, MadGraph logs and the Delphes output go under the data dir (--data-dir,
+# default this directory); MadGraph itself always stays here (its config holds absolute
+# paths to Pythia8 and Delphes).
+DATA_DIR = _SCRIPT_DIR
+WORK_DIR = os.path.join(DATA_DIR, "work")
 CARD_DIR = os.path.join(WORK_DIR, "textFiles")
 LOG_DIR = os.path.join(WORK_DIR, "logFiles")
 
@@ -236,28 +251,48 @@ def delphes_installed(mg5_root):
                                     for n in os.listdir(d))
 
 
+def pythia8_installed(mg5_root):
+    """Pythia8 counts as installed only when its library and MadGraph's Pythia8 interface
+    were built. An interrupted build leaves HEPTools/pythia8 with just the install log,
+    and MadGraph then silently switches the shower and Delphes off."""
+    heptools = os.path.join(mg5_root, "HEPTools")
+    lib = os.path.join(heptools, "pythia8", "lib")
+    has_lib = os.path.isdir(lib) and any(n.startswith("libpythia8") for n in os.listdir(lib))
+    iface = os.path.join(heptools, "MG5aMC_PY8_interface", "MG5aMC_PY8_interface")
+    return has_lib and os.access(iface, os.X_OK)
+
+
+def exroot_installed(mg5_root):
+    return os.path.isfile(os.path.join(mg5_root, "ExRootAnalysis", "libExRootAnalysis.so"))
+
+
 def ensure_tools():
-    """Install Pythia8 and Delphes into MadGraph if missing."""
+    """Install Pythia8, Delphes and ExRootAnalysis into MadGraph if missing."""
     mg5_root = os.path.dirname(os.path.dirname(MG5_EXE))
     restore_mg5_autoupdate_default(mg5_root)
     heptools = os.path.join(mg5_root, "HEPTools")
-    need = []
-    if not os.path.isdir(os.path.join(heptools, "pythia8")):
-        need.append("install pythia8")
-    if not delphes_installed(mg5_root):
-        need.append("install Delphes")
-    if not os.path.isdir(os.path.join(mg5_root, "ExRootAnalysis")):
-        need.append("install ExRootAnalysis")
+    checks = {"install pythia8": pythia8_installed, "install Delphes": delphes_installed,
+              "install ExRootAnalysis": exroot_installed}
+    need = [cmd for cmd, ok in checks.items() if not ok(mg5_root)]
     if not need:
         return
+    if "install pythia8" in need:
+        for d in ("pythia8", "MG5aMC_PY8_interface"):
+            partial = os.path.join(heptools, d)
+            if os.path.isdir(partial):
+                print(f"[env] removing incomplete {partial}", flush=True)
+                shutil.rmtree(partial)
     card = os.path.join(CARD_DIR, "install_tools.txt")
     with open(card, "w") as f:
         f.write("\n".join(need) + "\n")
-    print(f"[env] installing: {', '.join(need)} (needs ROOT for Delphes)", flush=True)
+    print(f"[env] installing: {', '.join(need)} (needs ROOT for Delphes; Pythia8 takes "
+          f"10-30 min, do not interrupt)", flush=True)
     execute_madgraph(card, "INSTALL")
-    if "install Delphes" in need and not delphes_installed(mg5_root):
-        sys.exit("Error: Delphes install failed. Ensure ROOT (root-config) is in PATH, "
-                 f"see {os.path.join(LOG_DIR, 'madgraph_install_tools.log')}")
+    failed = [cmd.split()[1] for cmd in need if not checks[cmd](mg5_root)]
+    if failed:
+        sys.exit(f"Error: install of {', '.join(failed)} failed (Delphes needs ROOT/root-config in PATH). "
+                 f"See {os.path.join(LOG_DIR, 'madgraph_install_tools.log')} and "
+                 f"{os.path.join(heptools, 'pythia8', 'pythia8_install.log')}")
 
 
 # ------------------------------------------------------------------ MG5 execution
@@ -347,20 +382,67 @@ def execute_madgraph(card_path, prefix):
 DELPHES_CARD = ""   # resolved path of the Delphes card, set in main()
 
 
+# Stable neutral DM states of the signal models (DMSimpt: Xs Xm Xv Xc Xd Xw; 2HDM+a: Xd = 52).
+# Delphes cards only know the SM/SUSY invisibles; any other PDG falls under the calorimeter
+# default, so the DM would be clustered into jets instead of giving MET.
+INVISIBLE_DM_PDGS = (51, 52, 53, 56, 57, 58)
+
+
 def resolve_delphes_card(spec):
-    """'CMS' -> MG5's delphes_card_CMS.dat; any other value is a file path."""
+    """'CMS' -> MG5's delphes_card_CMS.dat; any other value is a file path.
+    Returns a copy in WORK_DIR with the DM PDGs made invisible."""
     if os.path.isfile(spec):
-        return os.path.abspath(spec)
-    mg5_root = os.path.dirname(os.path.dirname(MG5_EXE))
-    named = os.path.join(mg5_root, "Template", "Common", "Cards", f"delphes_card_{spec}.dat")
-    if os.path.isfile(named):
-        return named
-    sys.exit(f"Error: Delphes card '{spec}' not found (looked for a file and for {named}).")
+        src = os.path.abspath(spec)
+    else:
+        mg5_root = os.path.dirname(os.path.dirname(MG5_EXE))
+        src = os.path.join(mg5_root, "Template", "Common", "Cards", f"delphes_card_{spec}.dat")
+        if not os.path.isfile(src):
+            sys.exit(f"Error: Delphes card '{spec}' not found (looked for a file and for {src}).")
+    return make_dm_invisible(src)
+
+
+def make_dm_invisible(src):
+    """Write <WORK_DIR>/<card>_invisDM.dat: zero calorimeter response for the DM PDGs
+    (next to the existing neutralino entry) and add them to NeutrinoFilter, which keeps
+    invisibles out of the generator-level jets."""
+    with open(src) as f:
+        text = f.read()
+    pdgs = [p for p in INVISIBLE_DM_PDGS if not re.search(rf"EnergyFraction\s*\{{{p}\}}", text)]
+
+    def add_fractions(m):
+        indent = m.group(1)
+        return m.group(0) + "".join(f"\n{indent}add EnergyFraction {{{p}}} {{0.0}}" for p in pdgs)
+    text, n_cal = re.subn(r"^([ \t]*)add EnergyFraction \{1000022\} \{[^}]*\}", add_fractions, text, flags=re.M)
+    if n_cal == 0:
+        sys.exit(f"Error: {src} has no 'add EnergyFraction {{1000022}}' line; cannot mark the DM "
+                 f"PDGs {INVISIBLE_DM_PDGS} invisible. Add them to its calorimeter modules by hand.")
+
+    def add_filter(m):
+        block = m.group(0)
+        if pdgs:
+            last = list(re.finditer(r"^([ \t]*)add PdgCode \{-?\d+\}[^\n]*$", block, flags=re.M))[-1]
+            extra = "".join(f"\n{last.group(1)}add PdgCode {{{s}{p}}}" for p in pdgs for s in ("", "-"))
+            block = block[:last.end()] + extra + block[last.end():]
+        return block
+    text = re.sub(r"module PdgCodeFilter NeutrinoFilter \{.*?\n\}", add_filter, text, flags=re.S)
+
+    base = os.path.splitext(os.path.basename(src))[0]
+    dest = os.path.join(WORK_DIR, f"{base}_invisDM.dat")
+    with open(dest, "w") as f:
+        f.write(text)
+    return dest
+
+
+NB_CORE = 0   # cores per MadGraph instance with --jobs > 1 (0: MadGraph default, all cores)
 
 
 def launch_header(run_name, process_dir, dir_exists):
     """Launch block; the card path line makes MG5 copy it into Cards/."""
-    launch = f"launch {process_dir} --name={run_name}\n" if dir_exists else f"launch --name={run_name}\n"
+    # 'launch' takes no core option; the session setting is passed on to the run.
+    # --no_save keeps it out of MadGraph's input/mg5_configuration.txt.
+    cores = f"set run_mode 2 --no_save\nset nb_core {NB_CORE} --no_save\n" if NB_CORE else ""
+    launch = cores + (f"launch {process_dir} --name={run_name}\n" if dir_exists
+                      else f"launch --name={run_name}\n")
     card = f"{DELPHES_CARD}\n" if DELPHES_CARD else ""
     return launch + "shower=Pythia8\ndetector=Delphes\nanalysis=ExRoot\n" + card
 
@@ -425,6 +507,41 @@ def merge_root(files, dest):
         raise RuntimeError(f"hadd failed: {r.stderr.strip()[-300:]}")
 
 
+def clear_process_libs(process_path):
+    """Delete the built libraries in <process>/lib before relaunching in an existing dir.
+
+    A relaunch rewrites Cards/run_card.dat, but MadGraph rewrites Source/run_card.inc only
+    when its content changes, so lib/libgeneric.a stays older than the card. The parallel
+    'make -j' of each SubProcesses/P* dir then re-enters Source/ from several targets at
+    once; they rebuild lib/libmodel.a concurrently and gensym fails to link ("undefined
+    reference to setpara_"). With the libraries removed, MadGraph's serial Source compile
+    (run before the subprocesses) rebuilds them newer than the cards, so the subprocess
+    makes find them up to date. Only build products are removed; no MadGraph file is edited."""
+    lib_dir = os.path.join(process_path, "lib")
+    for path in glob.glob(os.path.join(lib_dir, "lib*.a")):
+        os.remove(path)
+
+
+def launch_with_retry(card_path, tag, run_dir):
+    """Run a launch card; retry once if MadGraph still hit a compilation error."""
+    process_path = os.path.dirname(os.path.dirname(run_dir))
+    for attempt in (1, 2):
+        # A leftover run dir of the same name (earlier failed attempt) makes MadGraph
+        # collide with its own files, e.g. "unweighted_events.root already exists".
+        shutil.rmtree(run_dir, ignore_errors=True)
+        if os.path.isfile(os.path.join(process_path, "SubProcesses", "proc_characteristics")):
+            clear_process_libs(process_path)
+        try:
+            return execute_madgraph(card_path, tag)
+        except RuntimeError:
+            log_path = os.path.join(LOG_DIR, "madgraph_" + os.path.basename(card_path).replace(".txt", ".log"))
+            with open(log_path, errors="ignore") as f:
+                compile_error = "A compilation Error occurs" in f.read()
+            if attempt == 2 or not compile_error:
+                raise
+            print(f"  [{tag}] MadGraph compilation race, retrying {os.path.basename(card_path)}", flush=True)
+
+
 def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, dest_file, xs_key, args):
     """Run args.nruns launches of one process (different seeds), merge their Delphes ROOT
     files into one file in the output directory and record the mean cross-section."""
@@ -433,7 +550,7 @@ def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, des
     if os.path.exists(dest) and not args.force:
         print(f"  [{tag}] skip {run_name}: {dest_file} exists (use --force)", flush=True)
         return
-    nruns = max(1, args.nruns)
+    nruns = max(1, args.bkg_nruns if tag in BACKGROUNDS else args.nruns)
     proc_path = os.path.join(WORK_DIR, process_dir)
     # A process dir is usable only if MadGraph finished writing it; a half-built one
     # (e.g. an earlier run died at 'output') is wiped and regenerated.
@@ -457,10 +574,18 @@ def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, des
                 print(f"--- {card_path}  (run {k + 1}/{nruns})\n{text}")
                 continue
 
-            log = execute_madgraph(card_path, tag)
-            src = os.path.join(WORK_DIR, process_dir, "Events", rn, "tag_1_delphes_events.root")
-            if not os.path.exists(src):
-                raise RuntimeError(f"no Delphes output at {src}")
+            log = launch_with_retry(card_path, tag, os.path.join(WORK_DIR, process_dir, "Events", rn))
+            # The tag number is not fixed (the shower can open tag_2), so take the newest.
+            run_dir = os.path.join(WORK_DIR, process_dir, "Events", rn)
+            found = sorted(glob.glob(os.path.join(run_dir, "tag_*_delphes_events.root")),
+                           key=lambda p: int(re.search(r"tag_(\d+)_", os.path.basename(p)).group(1)))
+            src = found[-1] if found else os.path.join(run_dir, "tag_*_delphes_events.root")
+            if not found:
+                with open(log, errors="ignore") as f:
+                    off = "Not Avail." in f.read()
+                hint = (" (MadGraph switched shower/detector off: Pythia8 or Delphes not usable, "
+                        "see madgraph_install_tools.log)") if off else ""
+                raise RuntimeError(f"no Delphes output at {src}{hint}")
             os.makedirs(outdir, exist_ok=True)
             tmp = os.path.join(outdir, f".run{k + 1}.{dest_file}")
             shutil.copy2(src, tmp)
@@ -483,8 +608,21 @@ def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, des
                 os.remove(t)
 
     print(f"  [{tag}] {run_name}: {nruns} run(s) -> {dest}", flush=True)
+    record_sample(tag, xs_key, dest)
     if xss:
         record_xsec(args, tag, xs_key, sum(xss) / len(xss))
+
+
+def record_sample(tag, key, dest):
+    """Add the new output file to config/samples_config.yaml (thread-safe)."""
+    if _REPO_DIR not in sys.path:
+        sys.path.insert(0, _REPO_DIR)
+    from utils import samples_config
+    with _xs_lock:
+        if tag in ("2HDMA", "S3M", "S3D"):
+            samples_config.add_signal(*key, dest)
+        else:
+            samples_config.add_background(key, dest)
 
 
 # ------------------------------------------------------------------ cross-section yaml
@@ -499,13 +637,13 @@ def record_xsec(args, tag, key, xs):
             _write_nested(path, "signals", table, "Cross-section table for signal processes (2HDM+a). Units: pb.\n"
                           "# Format: mA, then ma in GeV.")
         elif tag in ("S3M", "S3D"):
-            path = os.path.join(_REPO_DIR, "config", "tchannel_signal_cross_sections.yaml")
+            path = os.path.join(_REPO_DIR, "config", f"tchannel_{tchannel_tag(args)}_cross_sections.yaml")
             table = _read_nested(path, "signals")
             mMED, mDM = key
             table.setdefault(mMED, {})[mDM] = xs
-            _write_nested(path, "signals", table, "t-channel DM signal cross-sections (same layout as "
-                          "signal_cross_sections.yaml). Units: pb.\n# Keys: mMED (as mA), then mDM (as ma). "
-                          "One DM type / lambda set at a time.")
+            _write_nested(path, "signals", table, f"t-channel DM signal cross-sections, {args.dm_type.upper()}, "
+                          f"lambda = {args.lam} (same layout as signal_cross_sections.yaml). Units: pb.\n"
+                          "# Keys: mMED (as mA), then mDM (as ma).")
         else:
             path = os.path.join(_REPO_DIR, "config", "background_cross_sections.yaml")
             import yaml
@@ -545,6 +683,18 @@ def fmt(x):
     return str(x).replace(".", "p")
 
 
+def tchannel_tag(args):
+    """DM type and coupling, e.g. 's3m_lam2p2': part of the t-channel file names, so
+    samples with different settings never overwrite or get mistaken for each other."""
+    return f"{args.dm_type}_lam{fmt(args.lam)}"
+
+
+def signal_file_name(args, tag, A, a):
+    if tag == "2HDMA":
+        return f"sig_bbdm_mA{A}_ma{a}_delphes_events.root"
+    return f"sig_bbdm_mA{A}_ma{a}_{tchannel_tag(args)}_delphes_events.root"
+
+
 def parse_points(spec):
     """'500:50,1000:100' -> [(500, 50), (1000, 100)]"""
     pts = []
@@ -568,61 +718,69 @@ def select_points(args, model, single, grid):
     return grid if args.mode == "grid" else [single]
 
 
-def run_tchannel(args, failed):
-    dm = args.dm_type
-    cfg = TCHANNEL_PROCS[dm]
-    tag = dm.upper()
-    grid = [(a, b) for a in T_MED_VALS for b in T_DM_VALS if a > b]
-    points = select_points(args, "tchannel", (args.mMED, args.mDM), grid)
-    for i, (mMED, mDM) in enumerate(points, 1):
-        if mMED <= mDM:
-            raise ValueError(f"Kinematic violation: mMED ({mMED}) <= mDM ({mDM})")
-        name = f"mMed{mMED}_mDM{mDM}_lam{fmt(args.lam)}"
-        print(f"  [{tag}] point {i}/{len(points)}: {name}", flush=True)
-        try:
-            proc_card, process_dir = load_process_card(cfg["mg5"], dict(UFO_TCHANNEL=UFO_TCHANNEL))
-            run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                      make_settings=lambda s, a=mMED, b=mDM: tchannel_settings(dm, a, b, args.lam, args.nevents, s),
-                      seed=args.seed + i, run_name=name,
-                      dest_file=f"sig_bbdm_mA{mMED}_ma{mDM}_delphes_events.root",
-                      xs_key=(mMED, mDM), args=args)
-        except Exception as e:
-            print(f"  [{tag}] SKIP {name}: {e}", flush=True)
-            failed.append(f"{tag}:{name}")
+# A task is one sample (signal point or background): its runs are sequential in one process
+# dir. Tasks sharing a process card ("group") run concurrently in separate copies of the
+# process dir, built by MadGraph from the same card with only the 'output' name changed.
+def signal_tasks(args):
+    """(tag, group card name, card values, [task dicts]) for the selected signal points."""
+    if args.signal_model == "tchannel":
+        dm = args.dm_type
+        tag, card, values = dm.upper(), TCHANNEL_PROCS[dm]["mg5"], dict(UFO_TCHANNEL=UFO_TCHANNEL)
+        grid = [(a, b) for a in T_MED_VALS for b in T_DM_VALS if a > b]
+        points = select_points(args, "tchannel", (args.mMED, args.mDM), grid)
+    else:
+        tag, card, values = "2HDMA", HDMA_PROC["mg5"], dict(UFO_2HDMA_T2=UFO_2HDMA)
+        grid = [(A, a) for A in H_MASS_A for a in H_MASS_a if a < A]
+        points = select_points(args, "2hdma", (args.mA, args.ma), grid)
+    tasks = []
+    for i, (A, a) in enumerate(points, 1):
+        if a >= A:
+            raise ValueError(f"Kinematic violation: {a} >= {A} for point {A}:{a}")
+        if tag == "2HDMA":
+            name = f"mA{A}_ma{a}"
+            settings = lambda s, A=A, a=a: hdma_settings(A, a, args.nevents, s)
+        else:
+            name = f"mMed{A}_mDM{a}_lam{fmt(args.lam)}"
+            settings = lambda s, A=A, a=a: tchannel_settings(args.dm_type, A, a, args.lam, args.nevents, s)
+        tasks.append(dict(tag=tag, name=name, make_settings=settings, seed=args.seed + i,
+                          dest_file=signal_file_name(args, tag, A, a), xs_key=(A, a)))
+    return tag, card, values, tasks
 
 
-def run_2hdma(args, failed):
-    tag = "2HDMA"
-    grid = [(A, a) for A in H_MASS_A for a in H_MASS_a if a < A]
-    points = select_points(args, "2hdma", (args.mA, args.ma), grid)
-    for i, (mA, ma) in enumerate(points, 1):
-        if ma >= mA:
-            raise ValueError(f"Kinematic violation: ma ({ma}) >= mA ({mA})")
-        name = f"mA{mA}_ma{ma}"
-        print(f"  [{tag}] point {i}/{len(points)}: {name}", flush=True)
-        try:
-            proc_card, process_dir = load_process_card(HDMA_PROC["mg5"], dict(UFO_2HDMA_T2=UFO_2HDMA))
-            run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                      make_settings=lambda s, a=mA, b=ma: hdma_settings(a, b, args.nevents, s),
-                      seed=args.seed + i, run_name=name,
-                      dest_file=f"sig_bbdm_mA{mA}_ma{ma}_delphes_events.root",
-                      xs_key=(mA, ma), args=args)
-        except Exception as e:
-            print(f"  [{tag}] SKIP {name}: {e}", flush=True)
-            failed.append(f"{tag}:{name}")
+def background_task(bkg, args):
+    return dict(tag=bkg, name=f"{bkg}_run", make_settings=lambda s: background_settings(args.nevents, s),
+                seed=args.seed, dest_file=f"{bkg}_delphes_events.root", xs_key=bkg)
 
 
-def run_background(bkg, args, failed):
-    tag = bkg
+def with_output_dir(proc_card, process_dir):
+    return re.sub(r"^output\s+\S+", f"output {process_dir}", proc_card, count=1, flags=re.M)
+
+
+def prepare_process_dir(tag, proc_card, process_dir):
+    """Build a process dir ('output' only) unless a complete one exists. Called serially:
+    concurrent 'output' commands write the same restricted-model files and model caches."""
+    proc_path = os.path.join(WORK_DIR, process_dir)
+    if os.path.isfile(os.path.join(proc_path, "SubProcesses", "proc_characteristics")):
+        return
+    if os.path.isdir(proc_path):
+        print(f"  [{tag}] removing incomplete process dir {process_dir}", flush=True)
+        shutil.rmtree(proc_path)
+    card_path = os.path.join(CARD_DIR, f"output_{process_dir}.txt")
+    with open(card_path, "w") as f:
+        f.write(proc_card)
+    print(f"  [{tag}] building process dir {process_dir}", flush=True)
+    execute_madgraph(card_path, tag)
+
+
+def run_task(task, proc_card, process_dir, args, failed):
     try:
-        proc_card, process_dir = load_process_card(f"{bkg}.mg5", {})
-        run_point(tag=tag, proc_card=proc_card, process_dir=process_dir,
-                  make_settings=lambda s: background_settings(args.nevents, s),
-                  seed=args.seed, run_name=f"{bkg}_run",
-                  dest_file=f"{bkg}_delphes_events.root", xs_key=bkg, args=args)
+        print(f"  [{task['tag']}] start {task['name']} in {process_dir}", flush=True)
+        run_point(tag=task["tag"], proc_card=proc_card, process_dir=process_dir,
+                  make_settings=task["make_settings"], seed=task["seed"], run_name=task["name"],
+                  dest_file=task["dest_file"], xs_key=task["xs_key"], args=args)
     except Exception as e:
-        print(f"  [{tag}] SKIP {bkg}: {e}", flush=True)
-        failed.append(f"{tag}")
+        print(f"  [{task['tag']}] SKIP {task['name']}: {e}", flush=True)
+        failed.append(f"{task['tag']}:{task['name']}")
 
 
 def main():
@@ -636,17 +794,26 @@ def main():
                    help="t-channel only: Majorana S3M or Dirac S3D (one per call)")
     p.add_argument("--mMED", type=int, default=1000, help="t-channel mediator mass (single)")
     p.add_argument("--mDM", type=int, default=100, help="t-channel DM mass (single)")
-    p.add_argument("--lam", type=float, default=1.0, help="t-channel DMS3D 3 3 coupling, fixed per call")
+    p.add_argument("--lam", type=float, default=2.2, help="t-channel DMS3D 3 3 coupling, fixed per call")
     p.add_argument("--points", default="", help="explicit points 'A:a,A:a,...' (mMED:mDM or mA:ma); overrides --mode")
     p.add_argument("--npoints", type=int, default=0, help="use the first N built-in default points")
     p.add_argument("--nruns", type=int, default=1,
-                   help="runs per sample with different seeds, merged with hadd into one file")
+                   help="runs per signal point with different seeds, merged with hadd into one file")
+    p.add_argument("--bkg-nruns", type=int, default=None,
+                   help="runs per background, merged with hadd (default: --nruns)")
+    p.add_argument("--jobs", type=int, default=1,
+                   help="samples generated at the same time; the CPU cores are split between them")
     p.add_argument("--mA", type=int, default=500, help="2HDM+a heavy pseudoscalar mass (single)")
     p.add_argument("--ma", type=int, default=100, help="2HDM+a light pseudoscalar mass (single)")
     p.add_argument("--nevents", type=int, default=10000)
     p.add_argument("--seed", type=int, default=1000, help="base run_card iseed")
-    p.add_argument("--signal-outdir", default=os.path.join(_SCRIPT_DIR, "DelphesSignal"))
-    p.add_argument("--background-outdir", default=os.path.join(_SCRIPT_DIR, "DelphesBackground"))
+    p.add_argument("--data-dir", default=DATA_DIR,
+                   help="base dir for large files: work dir and Delphes output (default genevents/)")
+    p.add_argument("--work-dir", default=None,
+                   help="MadGraph process dirs, cards and logs (default <data-dir>/work)")
+    p.add_argument("--signal-outdir", default=None, help="signal Delphes files (default <data-dir>/DelphesSignal)")
+    p.add_argument("--background-outdir", default=None,
+                   help="background Delphes files (default <data-dir>/DelphesBackground)")
     p.add_argument("--delphes-card", default="CMS",
                    help="Delphes card: 'CMS' (MG5 delphes_card_CMS.dat, default), another MG5 suffix "
                         "(ATLAS, CMS_PhaseII, ...) or a path to a .dat file")
@@ -654,7 +821,19 @@ def main():
     p.add_argument("--force", action="store_true", help="regenerate even if output ROOT exists")
     p.add_argument("--dry-run", action="store_true", help="write and print cards, do not run MG5")
     args = p.parse_args()
+    global WORK_DIR, CARD_DIR, LOG_DIR
+    data_dir = os.path.abspath(os.path.expanduser(args.data_dir))
+    WORK_DIR = os.path.abspath(os.path.expanduser(args.work_dir or os.path.join(data_dir, "work")))
+    CARD_DIR = os.path.join(WORK_DIR, "textFiles")
+    LOG_DIR = os.path.join(WORK_DIR, "logFiles")
+    args.signal_outdir = os.path.abspath(args.signal_outdir or os.path.join(data_dir, "DelphesSignal"))
+    args.background_outdir = os.path.abspath(args.background_outdir or os.path.join(data_dir, "DelphesBackground"))
+    print(f"[env] work dir: {WORK_DIR}", flush=True)
+    print(f"[env] output  : {args.signal_outdir} , {args.background_outdir}", flush=True)
     args.outdir_for = lambda tag: args.background_outdir if tag in BACKGROUNDS else args.signal_outdir
+    if args.bkg_nruns is None:
+        args.bkg_nruns = args.nruns
+    args.jobs = max(1, args.jobs)
 
     wanted = [x.strip() for x in args.proc.split(",")]
     do_signal = "signal" in wanted or "all" in wanted
@@ -674,23 +853,64 @@ def main():
     else:
         print("[dry-run] skipping MadGraph install check", flush=True)
 
-    failed = []
-    jobs = []   # independent process dirs may run concurrently; each dir is sequential
+    # Groups of tasks sharing one process card: (tag, card text, base process dir, tasks).
+    groups = []
     if do_signal:
-        if args.signal_model == "tchannel":
-            jobs.append(threading.Thread(target=run_tchannel, args=(args, failed), name=args.dm_type))
-        else:
-            jobs.append(threading.Thread(target=run_2hdma, args=(args, failed), name="2hdma"))
-    if bkgs:
-        def all_bkgs():
-            for b in bkgs:
-                run_background(b, args, failed)
-        jobs.append(threading.Thread(target=all_bkgs, name="bkg"))
+        tag, card, values, tasks = signal_tasks(args)
+        proc_card, base_dir = load_process_card(card, values)
+        groups.append((tag, proc_card, base_dir, tasks))
+    for b in bkgs:
+        proc_card, base_dir = load_process_card(f"{b}.mg5", {})
+        groups.append((b, proc_card, base_dir, [background_task(b, args)]))
 
-    for t in jobs:
-        t.start()
-    for t in jobs:
-        t.join()
+    def pending(task):
+        return args.force or not os.path.exists(os.path.join(args.outdir_for(task["tag"]), task["dest_file"]))
+
+    for tag, _, _, tasks in groups:
+        for t in tasks:
+            if not pending(t):
+                print(f"  [{tag}] skip {t['name']}: {t['dest_file']} exists (use --force)", flush=True)
+    groups = [(tag, card, base, [t for t in tasks if pending(t)]) for tag, card, base, tasks in groups]
+    groups = [g for g in groups if g[3]]
+
+    # One process dir per concurrently running task of a group: base, base_j1, base_j2, ...
+    slots = {}
+    for tag, card, base, tasks in groups:
+        n = min(args.jobs, len(tasks))
+        slots[base] = [base] + [f"{base}_j{i}" for i in range(1, n)]
+
+    global NB_CORE
+    if args.jobs > 1:
+        NB_CORE = max(1, (os.cpu_count() or 1) // args.jobs)
+        print(f"[env] {args.jobs} samples at a time, {NB_CORE} cores each", flush=True)
+
+    failed = []
+    if not args.dry_run:
+        try:
+            for tag, card, base, _ in groups:
+                for d in slots[base]:
+                    prepare_process_dir(tag, with_output_dir(card, d), d)
+        except RuntimeError as e:
+            sys.exit(f"Error: building a process dir failed: {e}")
+
+    import queue
+    from concurrent.futures import ThreadPoolExecutor
+    free = {base: queue.Queue() for base in slots}
+    for base, dirs in slots.items():
+        for d in dirs:
+            free[base].put(d)
+
+    def worker(task, card, base):
+        d = free[base].get()
+        try:
+            run_task(task, with_output_dir(card, d), d, args, failed)
+        finally:
+            free[base].put(d)
+
+    with ThreadPoolExecutor(max_workers=1 if args.dry_run else args.jobs) as pool:
+        for tag, card, base, tasks in groups:
+            for task in tasks:
+                pool.submit(worker, task, card, base)
 
     if failed:
         print(f"\nFAILED ({len(failed)}): {', '.join(failed)}", flush=True)
