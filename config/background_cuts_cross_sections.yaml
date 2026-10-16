@@ -3,10 +3,10 @@
 # Format: process_name: cross_section_value
 
 backgrounds:
-  sTop_tW: 23.93
-  sTop_tchannel: 41.5
-  diboson: 10.43
-  ttbar: 297.5
-  dyjets: 13.76
-  znnjets: 39.94
-  wlnjets: 130.2
+  sTop_tW: 23.718800000000016
+  sTop_tchannel: 40.99099999999999
+  diboson: 10.3791
+  ttbar: 296.94899999999996
+  dyjets: 13.682800000000013
+  znnjets: 40.4873
+  wlnjets: 131.6850000000001

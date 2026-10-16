@@ -22,6 +22,7 @@ python mg5_Generate_Run_bbMET.py --proc all --npoints 3 --jobs 4 \
 | `--nruns`, `--bkg-nruns` | runs per signal point / background, merged with `hadd` | `1`, `--nruns` |
 | `--jobs N` | samples at the same time; each MadGraph gets cores/N cores, and concurrent signal points use their own process dir copies (`<dir>_j1`, ...) | `1` |
 | `--cores N` | total cores split between the jobs | all |
+| `--lam-values V` | t-channel coupling scan: every selected point at each coupling of V, a comma list (`1.0,2.2,3.5`) or `all` = `DMS3D_VALS` = 1.0, 1.5, 2.0, 2.2, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0 (overrides `--lam`); one output file and one cross-section file per coupling | `--lam` only |
 | `--slim-delphes` | Delphes card copy writes only Jet, Electron, Muon, Photon, MissingET, ScalarHT, GenJet, GenMissingET | off |
 | `--bkg-cuts` | add `genScripts/<bkg>.cuts.madevent` (generator-level cuts) to each background; output to `<data-dir>/DelphesBackground_bkgcuts`, cross-sections to `../config/background_cuts_cross_sections.yaml` | off |
 
@@ -79,7 +80,7 @@ shower, detector and Delphes-card lines are added by the script.
 
 Placeholders in the cards are filled in by the script: `__UFO_TCHANNEL__` / `__UFO_2HDMA_T2__`
 (model path in `.mg5`), `__NEVENTS__`, `__ISEED__`, `__MMED__`, `__MDM__`, `__LAM__`, `__MCA__`,
-`__MSA__` (in `.madevent`). The beam energy (6800 GeV) is written directly in each settings card.
+`__MSA__` (in `.madevent`). The beam energy (6800 GeV per beam, 13.6 TeV) is written directly in each settings card.
 Edit a card to change a generator setting, for example add `set run_card ptj 20` before `done`.
 
 `genScripts/signal.mg5` and `signal.madevent` are the old 2HDM+a type I cards; the script no longer

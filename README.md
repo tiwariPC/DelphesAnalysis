@@ -20,6 +20,7 @@ failure. Main options:
 |---|---|---|
 | `--signal-model` | `tchannel` or `2hdma` (type II) | `tchannel` |
 | `--dm-type`, `--lam` | t-channel only: `s3m`/`s3d` and coupling, fixed per call | `s3m`, `2.2` |
+| `genevents/mg5_Generate_Run_bbMET.py --lam-values all` | coupling scan (λ = 1.0 ... 5.0, `DMS3D_VALS` in the script); generator only, `run_all.sh` analyses one λ at a time | |
 | `--npoints N` | first N built-in signal points (up to 8) | `3` |
 | `--points A:a,A:a` | explicit points (`mMED:mDM` or `mA:ma`), overrides `--npoints` | |
 | `--mode grid` | full mass grid instead of `--npoints` | |
@@ -61,7 +62,7 @@ Generation writes a lot of data (MadGraph process dirs, about 90 MB of Delphes o
 | Signal Delphes files | `<data-dir>/DelphesSignal/` (or `--signal-dir`) |
 | Background Delphes files | `<data-dir>/DelphesBackground/` (or `--background-dir`) |
 | MadGraph itself | always `genevents/MG5_aMC_v3_5_6/` (its config holds absolute paths) |
-| Analysis output | `output/` (or `--output-dir`) |
+| Analysis output (plots, datacards, sensitivity, limits; a few MB) | `output/` in the repo, e.g. `output/bkgcuts` (or `--output-dir`) |
 | Pipeline logs | `logs/` |
 
 Without `--data-dir` everything goes under `genevents/` in the repo. Use the same `--data-dir`
@@ -244,21 +245,40 @@ python scripts/calculate_sensitivity.py --output-dir output --format csv --outpu
 
 It reads the datacards in `output/datacards/sr*/` and lists signal, background, S/B and the Asimov
 significance for each region and signal point, plus `combined/<point>` (SR1b and SR2b).
-`plot_significance.py` makes the same comparison as a plot (`output/significance.pdf`, using
-s/√(s+b)).
 
-### Combined datacards and limits
+`plot_significance.py` draws the same numbers as grouped bars (SR1b, SR2b and their combination)
+per signal point, in CMS style, with the 3σ and 5σ levels (`significance.pdf` and `.png`). By default it
+uses the Asimov formula `Z = sqrt(2((s+b)ln(1+s/b) - s))`, the same as `sensitivity.txt`;
+`--formula simple` gives `s/sqrt(s+b)` instead. It is not a Punzi figure of merit (that would need the
+signal efficiency). All significances are statistical only.
+
+### Combined datacards and expected limits
 
 `process_regions.py` writes one datacard per signal region and signal point,
 `output/datacards/sr1b/datacard_mA{A}_ma{a}.txt` and `output/datacards/sr2b/...`, and combines the
-two regions into `output/datacards/combined_datacard_mA{A}_ma{a}.txt` (bins `SR1`, `SR2`).
+two regions into `output/datacards/combined_datacard_mA{A}_ma{a}.txt` (bins `SR1`, `SR2`). They are
+counting datacards (no shapes file); the background normalisations carry 20-40% lnN uncertainties
+(shared between the two regions) and the luminosity 2.5% (`lumi_13p6TeV`).
+
+With Combine installed (`INSTALL_COMBINE=1 source setup.sh`), the expected limits are made with
 
 ```bash
-python scripts/run_combine_limits.py --output-dir output --method AsymptoticLimits
+python scripts/run_combine_limits.py --output-dir output/bkgcuts \
+    --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml      # or run_all.sh --limits
 ```
 
-Note: the combined datacards still contain `shapes` lines pointing to `combined_shapes.root`, which
-the counting analysis does not produce; fix this before running Combine.
+It runs `combine -M AsymptoticLimits -t -1 --run expected` (Asimov data, there is no data) on every
+datacard and writes `limits.txt` and `limits.json`: the median and the 68% / 95% bands of the 95% CL
+upper limit on the signal strength `r` (`r < 1`: the signal point is expected to be excluded), and with
+`--signal-xsec` also the limit on the cross-section in pb. It also draws Brazilian-flag plots of the
+SR1b + SR2b combination, `limits_combined.pdf/.png` (limit on `r`) and `limits_combined_xsec.pdf/.png`
+(limit in pb next to the model cross-section), with the signal points ordered by mediator mass on the
+x axis, labelled `(m_med, m_DM)`.
+
+Notes: the limits include only the uncertainties in the datacard (no statistical uncertainty of the
+simulation, no shape uncertainties). The asymptotic method sometimes fails for the lower bands of a
+single region (`n/a` in `limits.txt`); the range of `r` given to Combine is chosen from the signal and
+background yields because the method breaks down if it is far larger than the limit.
 
 ## Configuration
 
@@ -280,20 +300,31 @@ See `docs/CONFIG_FILES_GUIDE.md` for detailed configuration documentation.
 
 ## Output Structure
 
+One directory per analysis, e.g. `output/bkgcuts/` (backgrounds generated with generator cuts) and
+`output/inclusive/` (without), each with:
+
 ```
-output/
+output/bkgcuts/
 ├── sensitivity.txt                          # S, B, S/B, Z per region and combined
-├── significance.pdf
+├── significance.pdf / .png                  # grouped bars per signal point
+├── limits.txt, limits.json                  # expected limits (with --limits)
+├── limits_combined.pdf / .png               # Brazilian-flag plot, limit on r
+├── limits_combined_xsec.pdf / .png          # Brazilian-flag plot, limit in pb
+├── limits/                                  # Combine output files
 ├── datacards/
 │   ├── combined_datacard_mA{A}_ma{a}.txt    # SR1b + SR2b, per signal point
 │   ├── sr1b/datacard_mA{A}_ma{a}.txt
 │   └── sr2b/datacard_mA{A}_ma{a}.txt
 └── plots/
-    ├── sr1b/                                # cutflow, met, mbb, ptbb, ht, dphi_jet_met_min (.pdf/.png/.root)
-    └── sr2b/                                # same plus cost_star
+    ├── sr1b/                                # cutflow, met, mbb, ptbb, ht, dphi_jet_met_min, cost_star_jj
+    └── sr2b/                                # same plus cost_star (two leading b-jets)
 ```
 
-`output/plots` and `output/datacards` are cleared at the start of each analysis run.
+Plots use the CMS style (mplhep) for 13.6 TeV; the legends have no frame, are smaller, and spread
+over several columns (and the y axis gets headroom) so they do not cover the distributions.
+`cost_star_jj` is `|cos θ*| = |tanh(Δη_jj / 2)|` of the two leading jets (any flavour), `cost_star` the
+same for the two leading b-jets (SR2b only). `plots` and `datacards` are cleared at the start of each
+analysis run. `output/` is git-ignored.
 
 ## Requirements
 

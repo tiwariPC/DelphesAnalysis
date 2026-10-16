@@ -740,6 +740,14 @@ def calculate_observables(jets, bjets, met, mask):
     # Only meaningful for events with at least 2 b-jets (2b category)
     cost_star = np.abs(np.tanh(deta_jet12 / 2.0))
 
+    # cos(theta*) of the two leading jets (any flavour):
+    # cost_star_jj = abs(tanh(dEtaJet12 / 2)), dEtaJet12 = eta(jet1) - eta(jet2).
+    # NaN for events with fewer than two jets.
+    jets_eta_sorted = selected_jets['Eta'][ak.argsort(selected_jets['PT'], axis=1, ascending=False, stable=True)]
+    padded_eta = ak.pad_none(jets_eta_sorted, 2, axis=1, clip=True)
+    deta_jj = ak.to_numpy(ak.fill_none(padded_eta[:, 0] - padded_eta[:, 1], np.nan))
+    cost_star_jj = np.abs(np.tanh(np.asarray(deta_jj, dtype=float) / 2.0))
+
     # HT (scalar sum of jet pT)
     ht = ak.sum(selected_jets['PT'], axis=1)
     ht = np.asarray(ak.to_numpy(ht))
@@ -782,6 +790,7 @@ def calculate_observables(jets, bjets, met, mask):
         "dphi_jet_met_min": dphi_jet_met_min_full,  # min(Δφ(jet, MET)) - minimum among all jets
         "ht": ht,
         "cost_star": cost_star_full,
+        "cost_star_jj": cost_star_jj,
     }
 
 
@@ -1004,7 +1013,7 @@ def generate_datacard(signal_name, signal_rate,
 
     # Luminosity uncertainty (correlated everywhere)
     lines.append("# Luminosity uncertainty (correlated everywhere)")
-    lines.append(f"lumi_13TeV     lnN  " + " ".join(["1.025"] * n_processes))
+    lines.append(f"lumi_13p6TeV     lnN  " + " ".join(["1.025"] * n_processes))
     lines.append("")
 
     # Signal theory uncertainty

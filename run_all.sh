@@ -191,7 +191,7 @@ python scripts/plot_significance.py --output-dir "$OUTPUT_DIR" --lumi "$LUMI"
 if [ "$LIMITS" -eq 1 ]; then
     step "6/6 Combine limits"
     command -v combine >/dev/null 2>&1 || { echo "ERROR: 'combine' not in PATH" >&2; exit 1; }
-    python scripts/run_combine_limits.py --output-dir "$OUTPUT_DIR" --method AsymptoticLimits
+    python scripts/run_combine_limits.py --output-dir "$OUTPUT_DIR" --signal-xsec "$SIGNAL_XSEC"
 else
     step "6/6 limits skipped (use --limits)"
 fi

@@ -15,6 +15,8 @@ Usage: python mg5_Generate_Run_bbMET.py [options]
   --signal-model M      tchannel (S3M/S3D) | 2hdma (type II)     (default tchannel)
   --dm-type T           t-channel only: s3m | s3d, one per call  (default s3m)
   --lam L               t-channel coupling DMS3D 3 3, fixed per call (default 2.2)
+  --lam-values V        coupling scan: each selected point at every coupling of V, a comma list
+                        or 'all' = DMS3D_VALS = 1.0 1.5 2.0 2.2 2.5 3.0 3.5 4.0 4.5 5.0 (overrides --lam)
   --points A:a,A:a,...  explicit points (mMED:mDM or mA:ma)
   --npoints N           first N built-in default points (up to 8)
   --mode single|grid    no --points/--npoints: one point, or the full grid
@@ -65,6 +67,7 @@ config/tchannel_{dm}_lam{L}_cross_sections.yaml (tchannel) and config/background
 import argparse
 import glob
 import itertools
+import json
 import os
 import re
 import shutil
@@ -109,6 +112,8 @@ LOG_DIR = os.path.join(WORK_DIR, "logFiles")
 # t-channel scan (same as tChannelDM-mg5EventGeneration)
 T_MED_VALS = [10, 50, 100, 200, 500, 750, 1000, 1500, 2000, 2500]
 T_DM_VALS = [1, 10, 50, 100, 200, 500, 750, 1000, 1500, 2000]
+# t-channel couplings (DMS3D 3 3, lambda) for a scan: --lam-values all  (or a list: --lam-values 1.0,2.2)
+DMS3D_VALS = [1.0, 1.5, 2.0, 2.2, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
 
 # 2HDM+a scan (same as condorJob/make_joblist.py)
 H_MASS_A = [300, 500, 700, 900, 1200, 1500]
@@ -567,94 +572,130 @@ def clear_process_libs(process_path):
 
 
 def launch_with_retry(card_path, tag, run_dir):
-    """Run a launch card; retry once if MadGraph still hit a compilation error."""
+    """Run a launch card; retry up to twice if MadGraph hit a compilation error.
+
+    The error is looked for in the log in both cases: MadGraph sometimes exits normally after
+    a compilation error (the run then has no output), sometimes with an error."""
     process_path = os.path.dirname(os.path.dirname(run_dir))
-    for attempt in (1, 2):
+    log_path = os.path.join(LOG_DIR, "madgraph_" + os.path.basename(card_path).replace(".txt", ".log"))
+
+    def had_compile_error():
+        with open(log_path, errors="ignore") as f:
+            return "A compilation Error occurs" in f.read()
+
+    for attempt in (1, 2, 3):
         # A leftover run dir of the same name (earlier failed attempt) makes MadGraph
         # collide with its own files, e.g. "unweighted_events.root already exists".
         shutil.rmtree(run_dir, ignore_errors=True)
         if os.path.isfile(os.path.join(process_path, "SubProcesses", "proc_characteristics")):
             clear_process_libs(process_path)
         try:
-            return execute_madgraph(card_path, tag)
+            log = execute_madgraph(card_path, tag)
+            if attempt == 3 or not had_compile_error():
+                return log
         except RuntimeError:
-            log_path = os.path.join(LOG_DIR, "madgraph_" + os.path.basename(card_path).replace(".txt", ".log"))
-            with open(log_path, errors="ignore") as f:
-                compile_error = "A compilation Error occurs" in f.read()
-            if attempt == 2 or not compile_error:
+            if attempt == 3 or not had_compile_error():
                 raise
-            print(f"  [{tag}] MadGraph compilation race, retrying {os.path.basename(card_path)}", flush=True)
+        print(f"  [{tag}] MadGraph compilation race, retrying {os.path.basename(card_path)}", flush=True)
 
 
-def run_point(*, tag, proc_card, process_dir, make_settings, seed, run_name, dest_file, xs_key, args):
-    """Run args.nruns launches of one process (different seeds), merge their Delphes ROOT
-    files into one file in the output directory and record the mean cross-section."""
+def task_nruns(task, args):
+    return max(1, args.bkg_nruns if task["tag"] in BACKGROUNDS else args.nruns)
+
+
+def chunk_paths(outdir, dest_file, k):
+    """Directory and files of finished chunk k (0-based) of the sample written to dest_file.
+    The chunk files stay until the sample is merged, so an interrupted or partly failed
+    generation resumes with the chunks that are already done."""
+    d = os.path.join(outdir, f".chunks_{os.path.splitext(dest_file)[0]}")
+    return d, os.path.join(d, f"run{k + 1}.root"), os.path.join(d, f"run{k + 1}.json")
+
+
+def chunk_signature(task, k, args):
+    """What a chunk was generated with; a stored chunk is reused only if this matches."""
+    return dict(name=task["name"], seed=task["seed"] + 1000 * k, nevents=args.nevents,
+                slim=args.slim_delphes, cuts=args.bkg_cuts, card=args.delphes_card, lam=task.get("lam", args.lam),
+                dm=args.dm_type)
+
+
+def run_chunk(*, task, k, nruns, proc_card, process_dir, args):
+    """One launch (different seed) of a task in process_dir. Stores the Delphes ROOT file and
+    the cross-section in the task's chunk directory; a finished chunk is reused unless --force."""
+    tag, run_name = task["tag"], task["name"]
     outdir = args.outdir_for(tag)
-    dest = os.path.join(outdir, dest_file)
-    if os.path.exists(dest) and not args.force:
-        print(f"  [{tag}] skip {run_name}: {dest_file} exists (use --force)", flush=True)
-        return
-    nruns = max(1, args.bkg_nruns if tag in BACKGROUNDS else args.nruns)
-    proc_path = os.path.join(WORK_DIR, process_dir)
-    # A process dir is usable only if MadGraph finished writing it; a half-built one
-    # (e.g. an earlier run died at 'output') is wiped and regenerated.
-    dir_exists = os.path.isfile(os.path.join(proc_path, "SubProcesses", "proc_characteristics"))
-    if os.path.isdir(proc_path) and not dir_exists and not args.dry_run:
-        print(f"  [{tag}] removing incomplete process dir {process_dir}", flush=True)
-        shutil.rmtree(proc_path)
-
-    tmp_files, xss = [], []
-    try:
-        for k in range(nruns):
-            rn = run_name if nruns == 1 else f"{run_name}_r{k + 1}"
-            if (k > 0 or dir_exists) and not args.dry_run:
-                reset_cards(process_dir)
-            text = proc_card if (k == 0 and not dir_exists) else ""
-            text += launch_header(rn, process_dir, True) + make_settings(seed + 1000 * k)
-            card_path = os.path.join(CARD_DIR, f"point_{tag}_{rn}.txt")
-            with open(card_path, "w") as f:
-                f.write(text)
-            if args.dry_run:
-                print(f"--- {card_path}  (run {k + 1}/{nruns})\n{text}")
-                continue
-
-            log = launch_with_retry(card_path, tag, os.path.join(WORK_DIR, process_dir, "Events", rn))
-            # The tag number is not fixed (the shower can open tag_2), so take the newest.
-            run_dir = os.path.join(WORK_DIR, process_dir, "Events", rn)
-            found = sorted(glob.glob(os.path.join(run_dir, "tag_*_delphes_events.root")),
-                           key=lambda p: int(re.search(r"tag_(\d+)_", os.path.basename(p)).group(1)))
-            src = found[-1] if found else os.path.join(run_dir, "tag_*_delphes_events.root")
-            if not found:
-                with open(log, errors="ignore") as f:
-                    off = "Not Avail." in f.read()
-                hint = (" (MadGraph switched shower/detector off: Pythia8 or Delphes not usable, "
-                        "see madgraph_install_tools.log)") if off else ""
-                raise RuntimeError(f"no Delphes output at {src}{hint}")
-            os.makedirs(outdir, exist_ok=True)
-            tmp = os.path.join(outdir, f".run{k + 1}.{dest_file}")
-            shutil.copy2(src, tmp)
-            tmp_files.append(tmp)
-            xs = parse_cross_section(log)
-            if xs is not None:
-                xss.append(xs)
-            print(f"  [{tag}] {rn}: xsec = {xs} pb", flush=True)
-            if not args.keep_events:
-                shutil.rmtree(os.path.join(WORK_DIR, process_dir, "Events", rn), ignore_errors=True)
-        if args.dry_run:
+    chunk_dir, chunk_root, chunk_meta = chunk_paths(outdir, task["dest_file"], k)
+    rn = run_name if nruns == 1 else f"{run_name}_r{k + 1}"
+    sig = chunk_signature(task, k, args)
+    if not args.force and not args.dry_run and os.path.isfile(chunk_root) and os.path.isfile(chunk_meta):
+        with open(chunk_meta) as f:
+            meta = json.load(f)
+        if meta.get("sig") == sig:
+            print(f"  [{tag}] {rn}: finished chunk found, reused (xsec = {meta.get('xs')} pb)", flush=True)
             return
-        if len(tmp_files) == 1:
-            os.replace(tmp_files[0], dest)
-        else:
-            merge_root(tmp_files, dest)
-    finally:
-        for t in tmp_files:
-            if os.path.exists(t):
-                os.remove(t)
 
-    print(f"  [{tag}] {run_name}: {nruns} run(s) -> {dest}", flush=True)
-    record_sample(tag, xs_key, dest)
+    proc_path = os.path.join(WORK_DIR, process_dir)
+    # The process dir is built before generation starts; it only does not exist in a dry run.
+    dir_exists = os.path.isfile(os.path.join(proc_path, "SubProcesses", "proc_characteristics"))
+    if dir_exists and not args.dry_run:
+        reset_cards(process_dir)
+    text = "" if dir_exists else proc_card
+    text += launch_header(rn, process_dir, True) + task["make_settings"](task["seed"] + 1000 * k)
+    card_path = os.path.join(CARD_DIR, f"point_{tag}_{rn}.txt")
+    with open(card_path, "w") as f:
+        f.write(text)
+    if args.dry_run:
+        print(f"--- {card_path}  (run {k + 1}/{nruns})\n{text}")
+        return
+
+    log_tag = tag if nruns == 1 else f"{tag} r{k + 1}"
+    run_dir = os.path.join(WORK_DIR, process_dir, "Events", rn)
+    log = launch_with_retry(card_path, log_tag, run_dir)
+    # The tag number is not fixed (the shower can open tag_2), so take the newest.
+    found = sorted(glob.glob(os.path.join(run_dir, "tag_*_delphes_events.root")),
+                   key=lambda p: int(re.search(r"tag_(\d+)_", os.path.basename(p)).group(1)))
+    src = found[-1] if found else os.path.join(run_dir, "tag_*_delphes_events.root")
+    if not found:
+        with open(log, errors="ignore") as f:
+            off = "Not Avail." in f.read()
+        hint = (" (MadGraph switched shower/detector off: Pythia8 or Delphes not usable, "
+                "see madgraph_install_tools.log)") if off else ""
+        raise RuntimeError(f"no Delphes output at {src}{hint}")
+    os.makedirs(chunk_dir, exist_ok=True)
+    shutil.copy2(src, chunk_root + ".part")
+    os.replace(chunk_root + ".part", chunk_root)
+    xs = parse_cross_section(log)
+    with open(chunk_meta, "w") as f:      # written last: marks the chunk as finished
+        json.dump(dict(xs=xs, sig=sig), f)
+    print(f"  [{tag}] {rn}: xsec = {xs} pb", flush=True)
+    if not args.keep_events:
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def finish_task(task, nruns, args):
+    """Merge the finished chunks of a task into its output file and record the sample and its
+    mean cross-section."""
+    tag = task["tag"]
+    outdir = args.outdir_for(tag)
+    dest = os.path.join(outdir, task["dest_file"])
+    files, xss = [], []
+    for k in range(nruns):
+        chunk_dir, chunk_root, chunk_meta = chunk_paths(outdir, task["dest_file"], k)
+        files.append(chunk_root)
+        with open(chunk_meta) as f:
+            xs = json.load(f).get("xs")
+        if xs is not None:
+            xss.append(xs)
+    os.makedirs(outdir, exist_ok=True)
+    if len(files) == 1:
+        shutil.copy2(files[0], dest + ".part")
+        os.replace(dest + ".part", dest)
+    else:
+        merge_root(files, dest)
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+    print(f"  [{tag}] {task['name']}: {nruns} run(s) -> {dest}", flush=True)
+    record_sample(tag, task["xs_key"], dest)
     if xss:
-        record_xsec(args, tag, xs_key, sum(xss) / len(xss))
+        record_xsec(args, tag, task["xs_key"], sum(xss) / len(xss), lam=task.get("lam"))
 
 
 def record_sample(tag, key, dest):
@@ -670,7 +711,7 @@ def record_sample(tag, key, dest):
 
 
 # ------------------------------------------------------------------ cross-section yaml
-def record_xsec(args, tag, key, xs):
+def record_xsec(args, tag, key, xs, lam=None):
     """Merge one cross-section into the matching config yaml (thread-safe)."""
     with _xs_lock:
         if tag == "2HDMA":
@@ -681,12 +722,13 @@ def record_xsec(args, tag, key, xs):
             _write_nested(path, "signals", table, "Cross-section table for signal processes (2HDM+a). Units: pb.\n"
                           "# Format: mA, then ma in GeV.")
         elif tag in ("S3M", "S3D"):
-            path = os.path.join(_REPO_DIR, "config", f"tchannel_{tchannel_tag(args)}_cross_sections.yaml")
+            lam = args.lam if lam is None else lam
+            path = os.path.join(_REPO_DIR, "config", f"tchannel_{tchannel_tag(args, lam)}_cross_sections.yaml")
             table = _read_nested(path, "signals")
             mMED, mDM = key
             table.setdefault(mMED, {})[mDM] = xs
             _write_nested(path, "signals", table, f"t-channel DM signal cross-sections, {args.dm_type.upper()}, "
-                          f"lambda = {args.lam} (same layout as signal_cross_sections.yaml). Units: pb.\n"
+                          f"lambda = {lam} (same layout as signal_cross_sections.yaml). Units: pb.\n"
                           "# Keys: mMED (as mA), then mDM (as ma).")
         else:
             # With generator cuts these are the cross-sections after the cuts: separate file.
@@ -729,16 +771,16 @@ def fmt(x):
     return str(x).replace(".", "p")
 
 
-def tchannel_tag(args):
+def tchannel_tag(args, lam=None):
     """DM type and coupling, e.g. 's3m_lam2p2': part of the t-channel file names, so
     samples with different settings never overwrite or get mistaken for each other."""
-    return f"{args.dm_type}_lam{fmt(args.lam)}"
+    return f"{args.dm_type}_lam{fmt(args.lam if lam is None else lam)}"
 
 
-def signal_file_name(args, tag, A, a):
+def signal_file_name(args, tag, A, a, lam=None):
     if tag == "2HDMA":
         return f"sig_bbdm_mA{A}_ma{a}_delphes_events.root"
-    return f"sig_bbdm_mA{A}_ma{a}_{tchannel_tag(args)}_delphes_events.root"
+    return f"sig_bbdm_mA{A}_ma{a}_{tchannel_tag(args, lam)}_delphes_events.root"
 
 
 def parse_points(spec):
@@ -767,6 +809,19 @@ def select_points(args, model, single, grid):
 # A task is one sample (signal point or background): its runs are sequential in one process
 # dir. Tasks sharing a process card ("group") run concurrently in separate copies of the
 # process dir, built by MadGraph from the same card with only the 'output' name changed.
+def lam_values(args):
+    """The t-channel couplings to generate: --lam-values (a comma list or 'all' for DMS3D_VALS),
+    else the single --lam."""
+    if not args.lam_values:
+        return [args.lam]
+    if args.lam_values.strip().lower() == "all":
+        return list(DMS3D_VALS)
+    try:
+        return [float(x) for x in args.lam_values.split(",") if x.strip()]
+    except ValueError:
+        sys.exit(f"Error: --lam-values {args.lam_values!r}: use 'all' or numbers like 1.0,2.2,3.5")
+
+
 def signal_tasks(args):
     """(tag, group card name, card values, [task dicts]) for the selected signal points."""
     if args.signal_model == "tchannel":
@@ -778,18 +833,21 @@ def signal_tasks(args):
         tag, card, values = "2HDMA", HDMA_PROC["mg5"], dict(UFO_2HDMA_T2=UFO_2HDMA)
         grid = [(A, a) for A in H_MASS_A for a in H_MASS_a if a < A]
         points = select_points(args, "2hdma", (args.mA, args.ma), grid)
+    lams = lam_values(args) if tag != "2HDMA" else [None]
     tasks = []
     for i, (A, a) in enumerate(points, 1):
         if a >= A:
             raise ValueError(f"Kinematic violation: {a} >= {A} for point {A}:{a}")
-        if tag == "2HDMA":
-            name = f"mA{A}_ma{a}"
-            settings = lambda s, A=A, a=a: hdma_settings(A, a, args.nevents, s)
-        else:
-            name = f"mMed{A}_mDM{a}_lam{fmt(args.lam)}"
-            settings = lambda s, A=A, a=a: tchannel_settings(args.dm_type, A, a, args.lam, args.nevents, s)
-        tasks.append(dict(tag=tag, name=name, make_settings=settings, seed=args.seed + i,
-                          dest_file=signal_file_name(args, tag, A, a), xs_key=(A, a)))
+        for lam in lams:
+            if tag == "2HDMA":
+                name = f"mA{A}_ma{a}"
+                settings = lambda s, A=A, a=a: hdma_settings(A, a, args.nevents, s)
+            else:
+                name = f"mMed{A}_mDM{a}_lam{fmt(lam)}"
+                settings = lambda s, A=A, a=a, lam=lam: tchannel_settings(
+                    args.dm_type, A, a, lam, args.nevents, s)
+            tasks.append(dict(tag=tag, name=name, make_settings=settings, seed=args.seed + i, lam=lam,
+                              dest_file=signal_file_name(args, tag, A, a, lam), xs_key=(A, a)))
     return tag, card, values, tasks
 
 
@@ -819,17 +877,6 @@ def prepare_process_dir(tag, proc_card, process_dir):
     execute_madgraph(card_path, tag)
 
 
-def run_task(task, proc_card, process_dir, args, failed):
-    try:
-        print(f"  [{task['tag']}] start {task['name']} in {process_dir}", flush=True)
-        run_point(tag=task["tag"], proc_card=proc_card, process_dir=process_dir,
-                  make_settings=task["make_settings"], seed=task["seed"], run_name=task["name"],
-                  dest_file=task["dest_file"], xs_key=task["xs_key"], args=args)
-    except Exception as e:
-        print(f"  [{task['tag']}] SKIP {task['name']}: {e}", flush=True)
-        failed.append(f"{task['tag']}:{task['name']}")
-
-
 def main():
     p = argparse.ArgumentParser(description="Self-contained MG5+Pythia8+Delphes generation for bbMET.")
     p.add_argument("--proc", default="signal",
@@ -842,6 +889,10 @@ def main():
     p.add_argument("--mMED", type=int, default=1000, help="t-channel mediator mass (single)")
     p.add_argument("--mDM", type=int, default=100, help="t-channel DM mass (single)")
     p.add_argument("--lam", type=float, default=2.2, help="t-channel DMS3D 3 3 coupling, fixed per call")
+    p.add_argument("--lam-values", default=None,
+                   help="coupling scan: every selected signal point at each of these couplings, a comma "
+                        "list (1.0,2.2,3.5) or 'all' = " + ",".join(str(v) for v in DMS3D_VALS) +
+                        "; overrides --lam. One output file and cross-section file per coupling.")
     p.add_argument("--points", default="", help="explicit points 'A:a,A:a,...' (mMED:mDM or mA:ma); overrides --mode")
     p.add_argument("--npoints", type=int, default=0, help="use the first N built-in default points")
     p.add_argument("--nruns", type=int, default=1,
@@ -849,9 +900,10 @@ def main():
     p.add_argument("--bkg-nruns", type=int, default=None,
                    help="runs per background, merged with hadd (default: --nruns)")
     p.add_argument("--jobs", type=int, default=1,
-                   help="samples generated at the same time; the CPU cores are split between them")
+                   help="runs (chunks of --nevents events) generated at the same time, also of the same "
+                        "sample; each needs its own process dir copy and cores/jobs CPU cores")
     p.add_argument("--cores", type=int, default=0,
-                   help="total CPU cores to use, split between the --jobs samples (default: all)")
+                   help="total CPU cores to use, split between the --jobs runs (default: all)")
     p.add_argument("--mA", type=int, default=500, help="2HDM+a heavy pseudoscalar mass (single)")
     p.add_argument("--ma", type=int, default=100, help="2HDM+a light pseudoscalar mass (single)")
     p.add_argument("--nevents", type=int, default=10000)
@@ -929,17 +981,24 @@ def main():
     groups = [(tag, card, base, [t for t in tasks if pending(t)]) for tag, card, base, tasks in groups]
     groups = [g for g in groups if g[3]]
 
-    # One process dir per concurrently running task of a group: base, base_j1, base_j2, ...
+    # The unit of work is one chunk (one run of one sample). Each chunk running at the same time
+    # needs its own process dir: base, base_j1, base_j2, ... The --jobs concurrent chunks are
+    # shared between the groups in proportion to their number of chunks.
+    n_chunks = {base: sum(task_nruns(t, args) for t in tasks) for _, _, base, tasks in groups}
+    total_chunks = sum(n_chunks.values())
     slots = {}
     for tag, card, base, tasks in groups:
-        n = min(args.jobs, len(tasks))
+        n = min(n_chunks[base], max(1, round(args.jobs * n_chunks[base] / total_chunks)))
         slots[base] = [base] + [f"{base}_j{i}" for i in range(1, n)]
 
     global NB_CORE
-    if args.jobs > 1 or args.cores:
+    n_concurrent = sum(len(v) for v in slots.values())
+    if n_concurrent > 1 or args.cores:
         total = args.cores or (os.cpu_count() or 1)
-        NB_CORE = max(1, total // args.jobs)
-        print(f"[env] {args.jobs} sample(s) at a time, {NB_CORE} core(s) each ({total} in total)", flush=True)
+        # At least 2: with nb_core 1 MadGraph runs Pythia8 unsplit, and this Pythia aborts with
+        # "Main:numberOfEvents = -1 out of range" (the split runs set the event number themselves).
+        NB_CORE = max(2, total // max(1, n_concurrent))
+        print(f"[env] {n_concurrent} chunk(s) at a time, {NB_CORE} core(s) each", flush=True)
 
     failed = []
     if not args.dry_run:
@@ -952,22 +1011,61 @@ def main():
 
     import queue
     from concurrent.futures import ThreadPoolExecutor
+    lock = threading.Lock()
     free = {base: queue.Queue() for base in slots}
     for base, dirs in slots.items():
         for d in dirs:
             free[base].put(d)
+    state = {}     # task name -> chunks finished / failed flag
 
-    def worker(task, card, base):
+    def fail(task, error):
+        with lock:
+            first = not state[task["name"]]["bad"]
+            state[task["name"]]["bad"] = True
+            if first:
+                failed.append(f"{task['tag']}:{task['name']}")
+        print(f"  [{task['tag']}] SKIP {task['name']}: {error}", flush=True)
+
+    def chunk_worker(task, k, nruns, card, base):
+        st = state[task["name"]]
+        if st["bad"]:
+            return                      # another chunk of this sample failed: do not waste time
         d = free[base].get()
         try:
-            run_task(task, with_output_dir(card, d), d, args, failed)
+            run_chunk(task=task, k=k, nruns=nruns, proc_card=with_output_dir(card, d),
+                      process_dir=d, args=args)
+        except Exception as e:
+            fail(task, e)
+            return
         finally:
             free[base].put(d)
+        with lock:
+            st["done"] += 1
+            last = st["done"] == nruns
+        if last:
+            try:
+                finish_task(task, nruns, args)
+            except Exception as e:
+                fail(task, e)
 
-    with ThreadPoolExecutor(max_workers=1 if args.dry_run else args.jobs) as pool:
+    if args.dry_run:
         for tag, card, base, tasks in groups:
             for task in tasks:
-                pool.submit(worker, task, card, base)
+                state[task["name"]] = dict(done=0, bad=False)
+                for k in range(task_nruns(task, args)):
+                    run_chunk(task=task, k=k, nruns=task_nruns(task, args), proc_card=with_output_dir(card, base),
+                              process_dir=base, args=args)
+    else:
+        pools = {base: ThreadPoolExecutor(max_workers=len(slots[base])) for base in slots}
+        for tag, card, base, tasks in groups:
+            for task in tasks:
+                nruns = task_nruns(task, args)
+                state[task["name"]] = dict(done=0, bad=False)
+                print(f"  [{tag}] start {task['name']}: {nruns} run(s) of {args.nevents} events", flush=True)
+                for k in range(nruns):
+                    pools[base].submit(chunk_worker, task, k, nruns, card, base)
+        for pool in pools.values():
+            pool.shutdown(wait=True)
 
     if failed:
         print(f"\nFAILED ({len(failed)}): {', '.join(failed)}", flush=True)

@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 """
-Plot significance (s/sqrt(s+b)) for all regions.
+Plot the expected significance (Asimov by default) of all signal regions and signal points.
 
 This script reads datacards and plots the significance for each region.
 """
@@ -56,30 +56,22 @@ def parse_datacard(datacard_file: Path) -> Dict:
     return info
 
 
-def calculate_significance(signal: float, background: float) -> float:
+def calculate_significance(signal: float, background: float, formula: str = "asimov") -> float:
     """
-    Calculate significance: s/sqrt(s+b)
+    Expected significance of a counting experiment.
 
-    Parameters:
-    -----------
-    signal : float
-        Signal yield
-    background : float
-        Total background yield
-
-    Returns:
-    --------
-    significance : float
-        Significance value
+    formula "asimov": sqrt(2 ((s+b) ln(1+s/b) - s))  (the one of calculate_sensitivity.py)
+    formula "simple": s / sqrt(s+b)
+    (they agree for s << b; the simple one is not a Punzi figure of merit, which would need the
+    signal efficiency).
     """
-    if signal <= 0:
+    if signal <= 0 or background < 0 or signal + background <= 0:
         return 0.0
-
-    total = signal + background
-    if total <= 0:
-        return 0.0
-
-    return signal / np.sqrt(total)
+    if formula == "simple":
+        return signal / np.sqrt(signal + background)
+    if background == 0:
+        return float("inf")
+    return float(np.sqrt(max(0.0, 2.0 * ((signal + background) * np.log(1.0 + signal / background) - signal))))
 
 
 def find_all_datacards(output_dir: Path) -> List[Tuple[Path, str]]:
@@ -110,116 +102,98 @@ def find_all_datacards(output_dir: Path) -> List[Tuple[Path, str]]:
     return datacards
 
 
-def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float = 290.0):
+def plot_significance(datacard_infos: List[Dict], output_file: Path, lumi: float = 290.0,
+                      formula: str = "asimov"):
     """
-    Plot significance for all regions.
-
-    Parameters:
-    -----------
-    datacard_infos : list
-        List of datacard info dictionaries
-    output_file : Path
-        Output file path
-    lumi : float
-        Luminosity in fb^-1
+    Grouped bar plot of the significance per signal point (ordered by mediator mass): SR1b,
+    SR2b and their combination (the regions are disjoint, so the significances add in
+    quadrature). Saved as PDF and PNG.
     """
-    # Set CMS style
     hep.style.use(hep.style.CMS)
 
-    # Calculate significance for each region
-    regions = []
-    significances = []
-    signal_yields = []
-    bg_yields = []
-
+    # {point: {region: (significance, signal, background)}}
+    table = {}
     for info in datacard_infos:
-        # Find signal and background rates
         process_to_rate = dict(zip(info["processes"], info["rates"]))
-
         # The signal process is called "sig" (current) or "signal" (older datacards)
         signal = process_to_rate.get("sig", process_to_rate.get("signal", 0.0))
-        background = sum([rate for proc, rate in process_to_rate.items() if proc not in ("sig", "signal")])
+        background = sum(r for proc, r in process_to_rate.items() if proc not in ("sig", "signal"))
+        label = info.get("label") or info["bin_name"]
+        region, _, point = label.partition("/")
+        table.setdefault(point or label, {})[region if point else label] = (
+            calculate_significance(signal, background, formula), signal, background)
 
-        sig = calculate_significance(signal, background)
+    for point, regions in table.items():
+        if len(regions) > 1:
+            z = float(np.sqrt(sum(v[0] ** 2 for v in regions.values())))
+            regions["combined"] = (z, sum(v[1] for v in regions.values()), sum(v[2] for v in regions.values()))
 
-        regions.append(info.get("label") or info["bin_name"])
-        significances.append(sig)
-        signal_yields.append(signal)
-        bg_yields.append(background)
+    def mass_key(point):
+        m = re.search(r"mA(\d+)_ma(\d+)", point)
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
-    # Combination of the signal regions per signal point (disjoint b-tag categories,
-    # so the significances add in quadrature)
-    by_point = {}
-    for region, sig, s_y, b_y in zip(regions, significances, signal_yields, bg_yields):
-        if "/" in region:
-            by_point.setdefault(region.split("/", 1)[1], []).append((sig, s_y, b_y))
-    for point, parts in sorted(by_point.items()):
-        if len(parts) > 1:
-            regions.append(f"combined/{point}")
-            significances.append(float(np.sqrt(sum(p[0] ** 2 for p in parts))))
-            signal_yields.append(sum(p[1] for p in parts))
-            bg_yields.append(sum(p[2] for p in parts))
+    points = sorted(table, key=mass_key)
+    series = [("sr1b", "SR1b", "#5790fc"), ("sr2b", "SR2b", "#f89c20"), ("combined", "SR1b + SR2b", "#964a8b")]
+    series = [(k, n, c) for k, n, c in series if any(k in table[p] for p in points)] or \
+             [(k, k, None) for k in sorted({r for p in points for r in table[p]})]
+    ylabel = (r"Expected significance $Z$" if formula == "asimov" else r"$s/\sqrt{s+b}$")
 
-    # Sort by significance (descending)
-    sorted_data = sorted(zip(regions, significances, signal_yields, bg_yields),
-                        key=lambda x: x[1], reverse=True)
-    regions, significances, signal_yields, bg_yields = zip(*sorted_data)
-
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # Bar plot
-    bars = ax.bar(range(len(regions)), significances, color='steelblue', alpha=0.7)
-
-    # Add value labels on bars
-    for i, (bar, sig) in enumerate(zip(bars, significances)):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-               f'{sig:.3f}',
-               ha='center', va='bottom', fontsize=10)
-
-    # Set labels
-    ax.set_xlabel(r"Region", labelpad=10, fontsize=14)
-    ax.set_ylabel(r"$s/\sqrt{s+b}$", labelpad=10, fontsize=14)
-    ax.set_title(r"Significance by Region", fontsize=16, pad=15)
-
-    # Set x-axis ticks
-    ax.set_xticks(range(len(regions)))
-    ax.set_xticklabels(regions, rotation=45, ha='right', fontsize=10)
-
-    # Add grid
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.set_axisbelow(True)
-
-    # Add CMS label
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
-
-    # Add text box with summary
-    textstr = f'Total regions: {len(regions)}\n'
-    textstr += f'Max significance: {max(significances):.3f}\n'
-    textstr += f'Min significance: {min(significances):.3f}'
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
-           verticalalignment='top', bbox=props)
+    fig, ax = plt.subplots(figsize=(11, 8))
+    width = 0.8 / len(series)
+    x = np.arange(len(points))
+    ymin = 1e-2
+    for k, (key, name, color) in enumerate(series):
+        vals = np.array([table[p].get(key, (np.nan,))[0] for p in points], dtype=float)
+        pos = x + (k - (len(series) - 1) / 2) * width
+        bars = ax.bar(pos, vals, width * 0.92, color=color, label=name)
+        for xi, v in zip(pos, vals):
+            if np.isfinite(v):
+                ax.text(xi, v * 1.12, f"{v:.2g}" if v < 10 else f"{v:.1f}", ha="center", va="bottom", fontsize=14)
+    ax.set_yscale("log")
+    ymax = np.nanmax([v[0] for p in points for v in table[p].values() if np.isfinite(v[0])])
+    ax.set_ylim(ymin, ymax * 12)
+    for level in (3, 5):
+        if level < ymax * 12:
+            ax.axhline(level, color="gray", ls="--", lw=1.5)
+            ax.text(len(points) - 0.45, level * 1.05, rf"{level}$\sigma$", color="gray", ha="right", va="bottom", fontsize=16)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"({mass_key(p)[0]}, {mass_key(p)[1]})" if mass_key(p) != (0, 0) else p for p in points])
+    ax.set_xlim(-0.6, len(points) - 0.4)
+    ax.set_xlabel(r"Signal point $(m_{\rm med},\ m_{\rm DM})$ [GeV]", labelpad=8)
+    ax.set_ylabel(ylabel)
+    ax.legend(loc="upper right", frameon=False, fontsize=18, ncol=len(series))
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     plt.tight_layout()
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    print(f"✓ Significance plot saved to: {output_file}")
+    output_file = Path(output_file)
+    for out in (output_file, output_file.with_suffix(".png")):
+        plt.savefig(out, dpi=200, bbox_inches="tight")
+        print(f"✓ Significance plot saved to: {out}")
+    plt.close(fig)
 
-    # Print summary
-    print("\n" + "="*70)
-    print("Significance Summary")
-    print("="*70)
-    print(f"{'Region':<28} {'Signal':>12} {'Background':>12} {'s/√(s+b)':>12}")
-    print("-"*70)
-    for region, sig, s, b in zip(regions, significances, signal_yields, bg_yields):
-        print(f"{region:<28} {s:>12.2f} {b:>12.2f} {sig:>12.3f}")
-    print("="*70)
+    print("\n" + "=" * 78)
+    print(f"Significance Summary ({'Asimov Z' if formula == 'asimov' else 's/sqrt(s+b)'}, statistical only)")
+    print("=" * 78)
+    print(f"{'Region/point':<28} {'Signal':>12} {'Background':>14} {'Z':>10}")
+    print("-" * 78)
+    for p in points:
+        for key, name, _ in series:
+            if key in table[p]:
+                z, sg, bg = table[p][key]
+                print(f"{key + '/' + p:<28} {sg:>12.2f} {bg:>14.2f} {z:>10.3f}")
+    print("=" * 78)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Plot significance (s/sqrt(s+b)) for all regions"
+    )
+    parser.add_argument(
+        "--formula",
+        choices=["asimov", "simple"],
+        default="asimov",
+        help="asimov: sqrt(2((s+b)ln(1+s/b)-s)), as in calculate_sensitivity.py (default); "
+             "simple: s/sqrt(s+b)"
     )
     parser.add_argument(
         "--output-dir",
@@ -293,7 +267,7 @@ def main():
     print("Plotting Significance")
     print("="*70)
     output_file = output_dir / args.output_file
-    plot_significance(datacard_infos, output_file, lumi=args.lumi)
+    plot_significance(datacard_infos, output_file, lumi=args.lumi, formula=args.formula)
 
     print("\n" + "="*70)
     print("✓ Complete!")

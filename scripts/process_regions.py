@@ -51,6 +51,8 @@ PLOT_BINNING = {
     "ptbb": {"range": (0, 800), "bins": 20, "variable": False},
     "dphi_jet_met_min": {"range": (0, np.pi), "bins": 20, "variable": False},
     "ht": {"range": (0, 2000), "bins": 25, "variable": False},
+    # |cos(theta*)| of the two leading jets, all signal regions
+    "cost_star_jj": {"range": (0.0, 1.0), "bins": 10, "variable": False},
 }
 
 def load_background_cross_sections(config_file="config/background_cross_sections.yaml"):
@@ -456,9 +458,9 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
     histograms = {}
     region_category = get_region_category(region_name)
     if region_category == "2b":
-        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star"]
+        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star", "cost_star_jj"]
     else:  # 1b category
-        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
+        observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star_jj"]
 
     for obs_name in observables_to_plot:
         if obs_name not in obs or obs_name not in PLOT_BINNING:
@@ -474,7 +476,8 @@ def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, 
                 "ptbb": r"$p_T(bb)$ [GeV]",
                 "dphi_jet_met_min": r"$\min(\Delta\phi(\rm jet, E_T^{\rm miss}))$",
                 "ht": r"$H_T$ [GeV]",
-                "cost_star": r"$|\cos\theta^{*}|$",
+                "cost_star": r"$|\cos\theta^{*}|$ (leading 2 b-jets)",
+                "cost_star_jj": r"$|\cos\theta^{*}|$ (leading 2 jets)",
             }
             label = label_map.get(obs_name, obs_name)
 
@@ -754,10 +757,10 @@ def main():
         # Plot each observable
         if region_category == "1b":
             # 1b SR: MET is main variable (with variable binning)
-            observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
+            observables_to_plot = ["met", "mbb", "ptbb", "dphi_jet_met_min", "ht", "cost_star_jj"]
         else:  # 2b SR
             # 2b SR: cost_star is main variable (with variable binning), also plot MET
-            observables_to_plot = ["cost_star", "met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
+            observables_to_plot = ["cost_star", "cost_star_jj", "met", "mbb", "ptbb", "dphi_jet_met_min", "ht"]
 
         for obs_name in observables_to_plot:
             bg_hists_obs = {}
@@ -953,7 +956,9 @@ def main():
 
                 if datacard_infos:
                     # Combine datacards for this signal
-                    combined_datacard = combine_datacards(datacard_infos, output_dir=output_dir)
+                    # Counting datacards: there is no shapes file, so the combination must not
+                    # refer to one (output_dir=None writes no 'shapes' lines)
+                    combined_datacard = combine_datacards(datacard_infos, output_dir=None)
 
                     # Save combined datacard in datacards directory (not plots)
                     combined_datacard_file = datacards_dir / f"combined_datacard_{sig_key}.txt"

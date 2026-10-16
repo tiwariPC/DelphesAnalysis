@@ -27,6 +27,54 @@ plt.rcParams['mathtext.fontset'] = 'stix'  # Use STIX fonts for better math rend
 hep.style.use(hep.style.CMS)
 
 
+def place_legend(ax, ymax_data=None, scale=0.65, max_height=0.26, max_width=0.70):
+    """Frameless, smaller legend that does not overlap the distributions.
+
+    The entries are spread over the smallest number of columns for which the legend is at most
+    max_height high and max_width wide (fractions of the axes; the width limit keeps it clear of
+    the region label at the upper left). If no number of columns satisfies both, the one with the
+    smallest height among those that fit the width is used (the narrowest if none fits). If the
+    highest data point (ymax_data, in data units) would still reach the legend, the upper y
+    limit is raised to make room above it."""
+    handles, labels = ax.get_legend_handles_labels()
+    if not labels:
+        return None
+    from matplotlib.font_manager import FontProperties
+    fig = ax.figure
+    fontsize = FontProperties(size=plt.rcParams["legend.fontsize"]).get_size_in_points() * scale
+    inv = ax.transAxes.inverted()
+
+    def draw_legend(ncol):
+        legend = ax.legend(handles, labels, loc="upper right", ncol=ncol, frameon=False, fontsize=fontsize,
+                           borderaxespad=0.4, columnspacing=1.0, handlelength=1.6, labelspacing=0.3)
+        fig.canvas.draw()
+        return legend, legend.get_window_extent().transformed(inv)
+
+    sizes = {}
+    for ncol in range(1, min(len(labels), 5) + 1):
+        _, box = draw_legend(ncol)
+        sizes[ncol] = (box.width, box.height)
+    fits = {n: wh for n, wh in sizes.items() if wh[0] <= max_width}
+    if fits:
+        tall_ok = [n for n, wh in fits.items() if wh[1] <= max_height]
+        best = min(tall_ok) if tall_ok else min(fits, key=lambda n: fits[n][1])
+    else:
+        best = min(sizes, key=lambda n: sizes[n][0])
+    legend, box = draw_legend(best)
+
+    if ymax_data and ymax_data > 0:
+        bottom, top = ax.get_ylim()
+        to_axes = lambda y: inv.transform(ax.transData.transform((ax.get_xlim()[0], y)))[1]
+        if to_axes(ymax_data) > box.y0 - 0.03:       # data reaches the legend: make room above
+            room = box.y0 - 0.04
+            if ax.get_yscale() == "log":
+                lb, ld = log10(bottom), log10(ymax_data)
+                ax.set_ylim(top=10 ** (lb + (ld - lb) / room))
+            else:
+                ax.set_ylim(top=bottom + (ymax_data - bottom) / room)
+    return legend
+
+
 def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
                  sample_name: str = "Sample",
                  output_file: Optional[str] = None,
@@ -180,11 +228,10 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
         ax.set_axisbelow(True)
 
         # Add legend
-        ax.legend(loc='upper right', frameon=True, fancybox=False, shadow=False,
-                 framealpha=1.0, edgecolor='black')
+        place_legend(ax, ymax_data=max_value)
 
         # Add CMS label using mplhep
-        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     else:
         # Single cutflow (backward compatibility)
@@ -245,7 +292,7 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
         ax.set_axisbelow(True)
 
         # Add CMS label using mplhep
-        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+        hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     plt.tight_layout(pad=0.5)
 
@@ -355,7 +402,7 @@ def plot_histogram(histogram: Hist,
     ax.set_ylabel(ylabel, labelpad=10)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     # Add region label if provided (below CMS label)
     if region_name:
@@ -557,7 +604,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
     ax.set_ylabel(r"Events", labelpad=10)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     # Add region label if provided (below CMS label)
     if region_name:
@@ -581,9 +628,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
         ax.set_xticks([edges[i] for i in tick_indices])
 
     # Legend (mplhep style handles most of this, but we customize)
-    legend = ax.legend(loc='upper right', frameon=True, fancybox=False, shadow=False,
-                      ncol=1, framealpha=1.0, edgecolor='black')
-    legend.get_frame().set_linewidth(1.5)
+    place_legend(ax, ymax_data=max_value)
 
     plt.tight_layout(pad=0.5)
 
@@ -636,7 +681,7 @@ def plot_mass_scan(ma_values: List[float],
     ax.set_axisbelow(True)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     plt.tight_layout(pad=0.5)
 
@@ -675,7 +720,7 @@ def plot_efficiency_curve(ma_values: List[float],
     ax.set_ylim(0, 1.1)
 
     # Add CMS label using mplhep
-    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3")
+    hep.cms.label(ax=ax, data=False, lumi=lumi, year="Run3", com=13.6)
 
     plt.tight_layout(pad=0.5)
 
