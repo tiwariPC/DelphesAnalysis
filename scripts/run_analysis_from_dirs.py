@@ -205,7 +205,7 @@ def build_process_regions_command(
     signal_files: List[Tuple[Path, int, int]],
     background_files: Dict[str, Path],
     signal_ngen: Optional[int] = None,
-    lumi: float = 290.0,
+    lumi: float = 326.03,
     output_dir: str = "output",
     signal_xsec_file: str = "config/signal_cross_sections.yaml",
     background_xsec_file: str = "config/background_cross_sections.yaml",
@@ -300,8 +300,8 @@ def main():
                        help="Directory containing background ROOT files")
     parser.add_argument("--signal-ngen", type=int, default=None,
                        help="Number of generated events for all signals (if not provided, will try to count from files)")
-    parser.add_argument("--lumi", type=float, default=290.0,
-                       help="Luminosity in fb^-1 (default: 290.0)")
+    parser.add_argument("--lumi", type=float, default=326.03,
+                       help="Luminosity in fb^-1 (default: 326.03)")
     parser.add_argument("--output-dir", type=str, default="output",
                        help="Output directory (default: output)")
     parser.add_argument("--samples-config", type=str, default="config/samples_config.yaml",

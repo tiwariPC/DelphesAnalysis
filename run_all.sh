@@ -28,7 +28,7 @@
 #   --signal-dir D       Delphes signal ROOT dir               (default <data-dir>/DelphesSignal)
 #   --background-dir D   Delphes background ROOT dir           (default <data-dir>/DelphesBackground)
 #   --output-dir D       analysis output                       (default output)
-#   --lumi L             luminosity in fb^-1                   (default 290.0)
+#   --lumi L             luminosity in fb^-1                   (default 326.03)
 #   --skip-gen           skip event generation
 #   --force              regenerate samples whose Delphes file already exists
 #   --slim-delphes       write only the Delphes branches the analysis reads (smaller files)
@@ -85,7 +85,7 @@ NEVENTS=10000; MODE=points; NPOINTS=3; POINTS=""; SIGNAL_MODEL=tchannel; DM_TYPE
 SIG_NRUNS=1; BKG_NRUNS=1; DELPHES_CARD=CMS; GEN_JOBS=4; GEN_CORES=0
 SIGNAL_DIR=""; BKG_DIR=""; WORK_DIR=""
 DATA_DIR="$REPO_DIR/genevents"
-OUTPUT_DIR=output; LUMI=290.0; SKIP_GEN=0; LIMITS=0; XS_UNIT=0; FORCE=0; SLIM=0; BKG_CUTS=0
+OUTPUT_DIR=output; LUMI=326.03; SKIP_GEN=0; LIMITS=0; XS_UNIT=0; FORCE=0; SLIM=0; BKG_CUTS=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -186,7 +186,7 @@ step "4/6 sensitivity"
 python scripts/calculate_sensitivity.py --output-dir "$OUTPUT_DIR" --output-file "$OUTPUT_DIR/sensitivity.txt"
 
 step "5/6 significance plot"
-python scripts/plot_significance.py --output-dir "$OUTPUT_DIR" --lumi "$LUMI"
+python scripts/plot_significance.py --output-dir "$OUTPUT_DIR" --lumi "$LUMI" --signal-xsec "$SIGNAL_XSEC"
 
 if [ "$LIMITS" -eq 1 ]; then
     step "6/6 Combine limits"

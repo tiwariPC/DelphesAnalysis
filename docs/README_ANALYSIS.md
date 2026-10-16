@@ -24,7 +24,7 @@ This shows:
 python scripts/run_analysis_from_dirs.py \
     --signal-dir genevents/DelphesSignal \
     --background-dir genevents/DelphesBackground \
-    --lumi 290.0 --output-dir output
+    --lumi 326.03 --output-dir output
 ```
 
 For a single explicit file use `scripts/process_regions.py` (see `docs/RUN_ANALYSIS.md`).

@@ -223,7 +223,7 @@ def main():
                         help="signal cross-section yaml: adds the limit on the cross-section (pb)")
     parser.add_argument("--region", default=None,
                         help="only this region (e.g. sr1b, sr2b, combined)")
-    parser.add_argument("--lumi", type=float, default=290.0, help="luminosity (fb^-1) for the plot label")
+    parser.add_argument("--lumi", type=float, default=326.03, help="luminosity (fb^-1) for the plot label")
     parser.add_argument("--no-plot", action="store_true", help="do not draw the Brazilian-flag plots")
     parser.add_argument("--verbose", action="store_true", help="print the Combine output")
     args = parser.parse_args()

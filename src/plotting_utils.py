@@ -79,7 +79,7 @@ def plot_cutflow(cutflow_dict: Optional[Dict[str, int]] = None,
                  sample_name: str = "Sample",
                  output_file: Optional[str] = None,
                  normalize: bool = False,
-                 lumi: float = 290.0,
+                 lumi: float = 326.03,
                  background_cutflows: Optional[Dict[str, Dict[str, int]]] = None):
     """
     Plot cutflow as stacked bar chart with CMS styling using mplhep.
@@ -323,7 +323,7 @@ def plot_histogram(histogram: Hist,
                   logy: bool = False,
                   normalize: bool = False,
                   region_name: Optional[str] = None,
-                  lumi: float = 290.0):
+                  lumi: float = 326.03):
     """
     Plot histogram with CMS publication quality using mplhep.
 
@@ -427,7 +427,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
                              logy: bool = True,
                              stack: bool = True,
                              region_name: Optional[str] = None,
-                             lumi: float = 290.0):
+                             lumi: float = 326.03):
     """
     Plot signal vs stacked backgrounds using mplhep for CMS styling.
     Supports overlaying multiple signal points.
@@ -654,7 +654,7 @@ def plot_signal_vs_background(signal_hist: Optional[Hist] = None,
 def plot_mass_scan(ma_values: List[float],
                   mbb_peaks: List[float],
                   output_file: Optional[str] = None,
-                  lumi: float = 290.0):
+                  lumi: float = 326.03):
     """
     Plot m(bb) peak vs ma (for resonance studies) with CMS styling.
 
@@ -695,7 +695,7 @@ def plot_mass_scan(ma_values: List[float],
 def plot_efficiency_curve(ma_values: List[float],
                          efficiencies: List[float],
                          output_file: Optional[str] = None,
-                         lumi: float = 290.0):
+                         lumi: float = 326.03):
     """
     Plot efficiency curve vs ma with CMS styling.
 

@@ -17,7 +17,7 @@ The stacked data/MC-style plots are made by `scripts/process_regions.py` (called
 python scripts/run_analysis_from_dirs.py \
     --signal-dir genevents/DelphesSignal \
     --background-dir genevents/DelphesBackground \
-    --lumi 290.0 --output-dir output
+    --lumi 326.03 --output-dir output
 ```
 
 Plots are saved in `output/plots/<region>/` as PDF and PNG.

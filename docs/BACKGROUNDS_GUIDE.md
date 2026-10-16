@@ -40,7 +40,7 @@ generator also writes the cross-section (mean over the runs) to
 python scripts/run_analysis_from_dirs.py \
     --signal-dir genevents/DelphesSignal \
     --background-dir genevents/DelphesBackground \
-    --lumi 290.0 --output-dir output
+    --lumi 326.03 --output-dir output
 ```
 
 Backgrounds are processed together with the signals; the number of generated events is counted from

@@ -1270,7 +1270,7 @@ if __name__ == "__main__":
     events = load_delphes_events("signal.root")
 
     processor = BBMETProcessor(
-        lumi_fb=290.0,
+        lumi_fb=326.03,
         xs_pb=1.0,  # Set your cross-section
         ngen=100000,  # Set your number of generated events
         sample_name="signal_mA1500_ma300"

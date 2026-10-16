@@ -23,7 +23,7 @@ If you have signal and background files in separate directories with standard na
 python scripts/run_analysis_from_dirs.py \
     --signal-dir DelphesSignal \
     --background-dir DelphesBackground \
-    --lumi 290.0 \
+    --lumi 326.03 \
     --output-dir output
 ```
 
@@ -57,7 +57,7 @@ python scripts/process_regions.py \
     --signal-mA 300 \
     --signal-ma 50 \
     --signal-ngen 100000 \
-    --lumi 290.0 \
+    --lumi 326.03 \
     --output-dir output
 ```
 
@@ -68,7 +68,7 @@ python scripts/process_regions.py \
     --signal-file /path/to/signal.root \
     --signal-xs 0.0002870400 \
     --signal-ngen 100000 \
-    --lumi 290.0 \
+    --lumi 326.03 \
     --output-dir output
 ```
 
@@ -90,7 +90,7 @@ python scripts/process_regions.py \
     --signal-mA 700 \
     --signal-ma 200 \
     --signal-ngen 100000 \
-    --lumi 290.0 \
+    --lumi 326.03 \
     --output-dir output
 ```
 
@@ -169,7 +169,7 @@ This will create plots with all signal points overlaid on the same background st
 - `--signal-ma`: Signal ma value in GeV (for cross-section lookup, one per --signal-file)
 - `--signal-ngen`: Signal number of generated events (one per --signal-file, required)
 - `--signal-label`: Signal label for legend (one per --signal-file, default: "Signal (mA, ma)")
-- `--lumi`: Luminosity in fb^-1 (default: 290.0 for Run3)
+- `--lumi`: Luminosity in fb^-1 (default: 326.03 for Run3)
 - `--output-dir`: Output directory (default: "output", same for all signals when overlaying)
 - `--samples-config`: Background samples config (default: "config/samples_config.yaml")
 - `--background-xsec`: Background cross-sections YAML (default: "config/background_cross_sections.yaml")

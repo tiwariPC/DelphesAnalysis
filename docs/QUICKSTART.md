@@ -39,11 +39,11 @@ python genevents/mg5_Generate_Run_bbMET.py --proc bkg
 python scripts/run_analysis_from_dirs.py \
     --signal-dir genevents/DelphesSignal \
     --background-dir genevents/DelphesBackground \
-    --lumi 290.0 --output-dir output
+    --lumi 326.03 --output-dir output
 
 # Sensitivity and significance
 python scripts/calculate_sensitivity.py --output-dir output --output-file output/sensitivity.txt
-python scripts/plot_significance.py --output-dir output --lumi 290.0
+python scripts/plot_significance.py --output-dir output --lumi 326.03
 ```
 
 For t-channel signals add `--signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml` to the

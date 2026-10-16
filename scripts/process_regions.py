@@ -333,7 +333,7 @@ def calculate_dphi_jet_met_min_all_events(jets, met):
 
 def process_sample_for_region(sample_name, events, jets, bjets, met, electrons, muons,
                               photons, taus, xs_pb, ngen, region_name, regions_config,
-                              lumi_fb=290.0, output_dir=None, cuts_config=None):
+                              lumi_fb=326.03, output_dir=None, cuts_config=None):
     """Process a sample for a specific region using pre-loaded events and objects."""
     # Build cutflow step by step - apply cuts in the order they appear in region config
     from src.regions import parse_cut_condition
@@ -549,7 +549,7 @@ def main():
                        help="Signal cross-sections YAML file")
     parser.add_argument("--xsec-file", type=str, default=None,
                        help="Background cross-section file (legacy, overrides YAML if provided)")
-    parser.add_argument("--lumi", type=float, default=290.0, help="Luminosity in fb^-1")
+    parser.add_argument("--lumi", type=float, default=326.03, help="Luminosity in fb^-1")
     parser.add_argument("--output-dir", type=str, default="output", help="Output directory")
     parser.add_argument("--cuts-config", type=str, default="config/cuts_config.yaml", help="Cuts configuration file")
     parser.add_argument("--signal-scale", type=float, default=1.0, help="Scale factor for signal histograms in plots only (default: 1.0, no scaling)")

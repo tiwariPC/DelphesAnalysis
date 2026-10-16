@@ -34,7 +34,7 @@ failure. Main options:
 | `--work-dir D` | MadGraph process dirs, cards and logs | `<data-dir>/work` |
 | `--signal-dir`, `--background-dir` | where the Delphes ROOT files are written and read | `<data-dir>/DelphesSignal`, `<data-dir>/DelphesBackground` |
 | `--output-dir D` | analysis output (plots, datacards, sensitivity) | `output` |
-| `--lumi L` | luminosity in fb⁻¹ | `290.0` |
+| `--lumi L` | luminosity in fb⁻¹ | `326.03` |
 | `--skip-gen` | reuse existing ROOT files | |
 | `--force` | regenerate samples whose Delphes file already exists (otherwise they are skipped) | |
 | `--limits` | also run Combine limits (needs `combine`) | |
@@ -195,10 +195,10 @@ python scripts/run_analysis_from_dirs.py \
     --signal-dir /path/to/DelphesSignal --signal-tag s3m_lam2p2 \
     --background-dir /path/to/DelphesBackground \
     --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml \
-    --lumi 290.0 \
+    --lumi 326.03 \
     --output-dir output
 python scripts/calculate_sensitivity.py --output-dir output --output-file output/sensitivity.txt
-python scripts/plot_significance.py --output-dir output --lumi 290.0
+python scripts/plot_significance.py --output-dir output --lumi 326.03
 ```
 
 File names (written by the generator):
@@ -226,7 +226,7 @@ python scripts/process_regions.py \
     --signal-file /path/to/sig_bbdm_mA1000_ma100_s3m_lam2p2_delphes_events.root \
     --signal-mA 1000 --signal-ma 100 --signal-ngen 1000 \
     --signal-xsec config/tchannel_s3m_lam2p2_cross_sections.yaml \
-    --lumi 290.0 --output-dir output
+    --lumi 326.03 --output-dir output
 ```
 
 - With `--signal-mA`/`--signal-ma` the cross-section is taken from the `--signal-xsec` file;
@@ -247,10 +247,14 @@ It reads the datacards in `output/datacards/sr*/` and lists signal, background, 
 significance for each region and signal point, plus `combined/<point>` (SR1b and SR2b).
 
 `plot_significance.py` draws the same numbers as grouped bars (SR1b, SR2b and their combination)
-per signal point, in CMS style, with the 3σ and 5σ levels (`significance.pdf` and `.png`). By default it
+per signal point, in CMS style, with the 3σ and 5σ levels (`significance_asimov.pdf` and `.png`). By default it
 uses the Asimov formula `Z = sqrt(2((s+b)ln(1+s/b) - s))`, the same as `sensitivity.txt`;
-`--formula simple` gives `s/sqrt(s+b)` instead. It is not a Punzi figure of merit (that would need the
-signal efficiency). All significances are statistical only.
+`--formula simple` gives `s/sqrt(s+b)` instead. A second plot, `significance_punzi.pdf` and `.png`,
+shows the Punzi figure of merit `eps_S / (a/2 + sqrt(B))` (a = 5 by default, `--punzi-a`), where
+`eps_S = S / (sigma L)` is the fraction of the produced signal that passes the selection; it needs the
+signal cross-sections (`--signal-xsec`, passed by `run_all.sh`). For SR1b + SR2b the yields of the two
+regions are added; the Asimov significances of the two regions are added in quadrature. The luminosity
+is 326.03 fb⁻¹. All significances are statistical only.
 
 ### Combined datacards and expected limits
 
@@ -306,7 +310,8 @@ One directory per analysis, e.g. `output/bkgcuts/` (backgrounds generated with g
 ```
 output/bkgcuts/
 ├── sensitivity.txt                          # S, B, S/B, Z per region and combined
-├── significance.pdf / .png                  # grouped bars per signal point
+├── significance_asimov.pdf / .png           # grouped bars per signal point, Asimov Z
+├── significance_punzi.pdf / .png            # Punzi figure of merit eps_S / (a/2 + sqrt(B)), a = 5
 ├── limits.txt, limits.json                  # expected limits (with --limits)
 ├── limits_combined.pdf / .png               # Brazilian-flag plot, limit on r
 ├── limits_combined_xsec.pdf / .png          # Brazilian-flag plot, limit in pb
